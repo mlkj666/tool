@@ -1,11 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -14,8 +11,8 @@ void main() {
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
     ),
   );
   runApp(const BsFontApp());
@@ -32,10 +29,7 @@ class BsFontApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         fontFamily: 'Arial',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.black,
-          brightness: Brightness.light,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.black),
       ),
       home: const AppGate(),
     );
@@ -61,13 +55,11 @@ class SessionUser {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'username': username,
-      'role': role,
-      'expire_time': expireTime ?? '',
-    };
-  }
+  Map<String, dynamic> toJson() => {
+    'username': username,
+    'role': role,
+    'expire_time': expireTime ?? '',
+  };
 }
 
 class AppGate extends StatefulWidget {
@@ -129,9 +121,7 @@ class _AppGateState extends State<AppGate> {
   Widget build(BuildContext context) {
     if (_booting) return const SplashView();
     final user = _user;
-    if (user == null) {
-      return AuthScreen(onAuthenticated: _saveSession);
-    }
+    if (user == null) return AuthScreen(onAuthenticated: _saveSession);
     return ToolPanel(user: user, cookie: _cookie, onLogout: _logout);
   }
 }
@@ -142,14 +132,8 @@ class SplashView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: SizedBox(
-          width: 30,
-          height: 30,
-          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-        ),
-      ),
+      backgroundColor: Colors.white,
+      body: Center(child: CircularProgressIndicator(color: Colors.black)),
     );
   }
 }
@@ -171,7 +155,6 @@ class _AuthScreenState extends State<AuthScreen> {
   final _license = TextEditingController();
   final _focusPassword = FocusNode();
   final _focusLicense = FocusNode();
-
   var _registerMode = false;
   var _loading = false;
   var _obscure = true;
@@ -186,7 +169,7 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  Future<Map<String, dynamic>> _callApi(
+  Future<Map<String, dynamic>> _post(
     String action,
     Map<String, String> body,
   ) async {
@@ -196,8 +179,9 @@ class _AuthScreenState extends State<AuthScreen> {
       body: body,
     );
     final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-    if (decoded is Map<String, dynamic>) return decoded;
-    return {'success': false, 'msg': '服务器响应格式异常'};
+    return decoded is Map<String, dynamic>
+        ? decoded
+        : {'success': false, 'msg': '服务器响应异常'};
   }
 
   String? _sessionCookie(http.Response response) {
@@ -210,7 +194,6 @@ class _AuthScreenState extends State<AuthScreen> {
     final username = _username.text.trim();
     final password = _password.text.trim();
     final license = _license.text.trim();
-
     if (username.isEmpty || password.isEmpty) {
       _toast('请输入账号和密码', isError: true);
       return;
@@ -223,7 +206,7 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _loading = true);
     try {
       if (_registerMode) {
-        final data = await _callApi('register', {
+        final data = await _post('register', {
           'username': username,
           'password': password,
           'license_key': license,
@@ -242,8 +225,10 @@ class _AuthScreenState extends State<AuthScreen> {
         );
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         if (data is Map<String, dynamic> && data['success'] == true) {
-          final user = SessionUser.fromJson(data['user']);
-          await widget.onAuthenticated(user, _sessionCookie(response));
+          await widget.onAuthenticated(
+            SessionUser.fromJson(data['user']),
+            _sessionCookie(response),
+          );
         } else {
           _toast((data['msg'] ?? '登录失败').toString(), isError: true);
         }
@@ -256,24 +241,18 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _toast(String message, {bool isError = false}) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearSnackBars();
-    messenger.showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        elevation: 0,
-        backgroundColor: isError ? const Color(0xFFEF4444) : Colors.white,
-        margin: const EdgeInsets.fromLTRB(18, 0, 18, 22),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        content: Text(
-          message,
-          style: TextStyle(
-            color: isError ? Colors.white : Colors.black,
-            fontWeight: FontWeight.w700,
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: isError ? const Color(0xFFEF4444) : Colors.black,
+          content: Text(
+            message,
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
-      ),
-    );
+      );
   }
 
   @override
@@ -281,150 +260,114 @@ class _AuthScreenState extends State<AuthScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          const _AuthBackdrop(),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(22, 24, 22, 28),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 430),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutCubic,
-                    padding: const EdgeInsets.all(22),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x66000000),
-                          blurRadius: 30,
-                          offset: Offset(0, 18),
-                        ),
-                      ],
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(22),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 430),
+              child: Container(
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x33000000), blurRadius: 28),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const _BrandHeader(),
+                    const SizedBox(height: 24),
+                    Text(
+                      _registerMode ? '创建账号' : '欢迎回来',
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const _BrandHeader(),
-                        const SizedBox(height: 22),
-                        AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          child: Column(
-                            key: ValueKey(_registerMode),
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                _registerMode ? '创建账号' : '欢迎回来',
-                                style: const TextStyle(
-                                  fontSize: 28,
-                                  height: 1.1,
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _registerMode
-                                    ? '输入授权卡密，开启字体修符工作台'
-                                    : '登录后继续进入你的字符面板',
-                                style: const TextStyle(
-                                  color: Color(0xFF6B7280),
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              _InputField(
-                                controller: _username,
-                                hint: '账号',
-                                icon: Icons.person_rounded,
-                                textInputAction: TextInputAction.next,
-                                onSubmitted: (_) =>
-                                    _focusPassword.requestFocus(),
-                              ),
-                              const SizedBox(height: 12),
-                              _InputField(
-                                controller: _password,
-                                focusNode: _focusPassword,
-                                hint: '密码',
-                                icon: Icons.lock_rounded,
-                                obscureText: _obscure,
-                                textInputAction: _registerMode
-                                    ? TextInputAction.next
-                                    : TextInputAction.done,
-                                suffix: IconButton(
-                                  onPressed: () {
-                                    setState(() => _obscure = !_obscure);
-                                  },
-                                  icon: Icon(
-                                    _obscure
-                                        ? Icons.visibility_rounded
-                                        : Icons.visibility_off_rounded,
-                                  ),
-                                ),
-                                onSubmitted: (_) {
-                                  if (_registerMode) {
-                                    _focusLicense.requestFocus();
-                                  } else {
-                                    _submit();
-                                  }
-                                },
-                              ),
-                              AnimatedSize(
-                                duration: const Duration(milliseconds: 220),
-                                curve: Curves.easeOutCubic,
-                                child: _registerMode
-                                    ? Padding(
-                                        padding: const EdgeInsets.only(top: 12),
-                                        child: _InputField(
-                                          controller: _license,
-                                          focusNode: _focusLicense,
-                                          hint: '授权卡密',
-                                          icon: Icons.verified_user_rounded,
-                                          textInputAction: TextInputAction.done,
-                                          onSubmitted: (_) => _submit(),
-                                        ),
-                                      )
-                                    : const SizedBox.shrink(),
-                              ),
-                              const SizedBox(height: 20),
-                              _PrimaryButton(
-                                loading: _loading,
-                                label: _registerMode ? '注册并验证' : '登录',
-                                onPressed: _submit,
-                              ),
-                              const SizedBox(height: 14),
-                              TextButton(
-                                onPressed: _loading
-                                    ? null
-                                    : () {
-                                        setState(
-                                          () => _registerMode = !_registerMode,
-                                        );
-                                      },
-                                child: Text(
-                                  _registerMode ? '已有账号，返回登录' : '没有账号，使用卡密注册',
-                                  style: const TextStyle(
-                                    color: Colors.black,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 8),
+                    Text(
+                      _registerMode ? '输入授权卡密后注册使用' : '登录后进入字体修符工具',
+                      style: const TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 24),
+                    _InputField(
+                      controller: _username,
+                      hint: '账号',
+                      icon: Icons.person_rounded,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (_) => _focusPassword.requestFocus(),
+                    ),
+                    const SizedBox(height: 12),
+                    _InputField(
+                      controller: _password,
+                      focusNode: _focusPassword,
+                      hint: '密码',
+                      icon: Icons.lock_rounded,
+                      obscureText: _obscure,
+                      textInputAction: _registerMode
+                          ? TextInputAction.next
+                          : TextInputAction.done,
+                      suffix: IconButton(
+                        onPressed: () => setState(() => _obscure = !_obscure),
+                        icon: Icon(
+                          _obscure
+                              ? Icons.visibility_rounded
+                              : Icons.visibility_off_rounded,
+                        ),
+                      ),
+                      onSubmitted: (_) => _registerMode
+                          ? _focusLicense.requestFocus()
+                          : _submit(),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 220),
+                      child: _registerMode
+                          ? Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: _InputField(
+                                controller: _license,
+                                focusNode: _focusLicense,
+                                hint: '授权卡密',
+                                icon: Icons.verified_user_rounded,
+                                textInputAction: TextInputAction.done,
+                                onSubmitted: (_) => _submit(),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    const SizedBox(height: 20),
+                    _PrimaryButton(
+                      loading: _loading,
+                      label: _registerMode ? '注册并验证' : '登录',
+                      onPressed: _submit,
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: _loading
+                          ? null
+                          : () =>
+                                setState(() => _registerMode = !_registerMode),
+                      child: Text(
+                        _registerMode ? '已有账号，返回登录' : '没有账号，使用卡密注册',
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -447,6 +390,7 @@ class ToolPanel extends StatefulWidget {
 }
 
 class _ToolPanelState extends State<ToolPanel> {
+  static const _nativeChannel = MethodChannel('bs_font/native');
   late final WebViewController _controller;
   var _progress = 0;
   String? _error;
@@ -465,9 +409,11 @@ class _ToolPanelState extends State<ToolPanel> {
       )
       ..addJavaScriptChannel(
         'FileSaver',
-        onMessageReceived: (message) {
-          _saveExportedFile(message.message);
-        },
+        onMessageReceived: (message) => _saveExportedFile(message.message),
+      )
+      ..addJavaScriptChannel(
+        'NativeImagePicker',
+        onMessageReceived: (message) => _pickNativeImages(message.message),
       )
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -481,9 +427,9 @@ class _ToolPanelState extends State<ToolPanel> {
         ),
       );
     _loadTool();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _maybeShowAnnouncement();
-    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _maybeShowAnnouncement(),
+    );
   }
 
   Future<void> _loadTool() async {
@@ -504,34 +450,27 @@ class _ToolPanelState extends State<ToolPanel> {
       );
       final base64 = (data['base64'] ?? '').toString();
       if (base64.isEmpty) return;
+      await _nativeChannel.invokeMethod('saveFont', {
+        'filename': filename,
+        'base64': base64,
+      });
+    } catch (_) {
+      if (mounted) _snack('文件保存页面打开失败，请重新导出一次');
+    }
+  }
 
-      final bytes = base64Decode(base64);
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}${Platform.pathSeparator}$filename');
-      await file.writeAsBytes(bytes, flush: true);
-
-      await SharePlus.instance.share(
-        ShareParams(
-          files: [XFile(file.path, mimeType: 'font/ttf', name: filename)],
-          subject: filename,
-          text: '保存导出的字体文件',
-        ),
+  Future<void> _pickNativeImages(String source) async {
+    try {
+      final result = await _nativeChannel.invokeMethod<List<Object?>>(
+        'pickImages',
+        {'source': source},
+      );
+      if (result == null || result.isEmpty) return;
+      await _controller.runJavaScript(
+        'window.receiveNativeImages(${jsonEncode(result)})',
       );
     } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFFEF4444),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          content: const Text(
-            '文件保存面板打开失败，请重新导出一次',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-      );
+      if (mounted) _snack('图片选择失败，请重新尝试');
     }
   }
 
@@ -546,11 +485,10 @@ class _ToolPanelState extends State<ToolPanel> {
 
   Future<void> _maybeShowAnnouncement() async {
     try {
-      final uri = Uri.parse(
-        'https://tool.uxgzs.icu/api.php',
-      ).replace(queryParameters: {'action': 'get_announcement'});
       final response = await http.post(
-        uri,
+        Uri.parse(
+          'https://tool.uxgzs.icu/api.php',
+        ).replace(queryParameters: {'action': 'get_announcement'}),
         headers: {
           if (widget.cookie != null && widget.cookie!.isNotEmpty)
             'Cookie': widget.cookie!,
@@ -565,29 +503,46 @@ class _ToolPanelState extends State<ToolPanel> {
       final content = (raw['content'] ?? raw['message'] ?? '')
           .toString()
           .trim();
-      if (content.isEmpty) return;
+      if (content.isEmpty || !mounted) return;
       final title = (raw['title'] ?? '公告').toString();
       final id = (raw['id'] ?? raw['updated_at'] ?? content.hashCode)
           .toString();
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getString('dismissed_announcement_id') == id) return;
-      if (!mounted) return;
+      if (prefs.getString('dismissed_announcement_id') == id || !mounted) {
+        return;
+      }
       await showDialog<void>(
         context: context,
-        barrierDismissible: false,
-        builder: (context) => _AnnouncementDialog(
-          title: title,
-          content: content,
-          onClose: () async {
-            await prefs.setString('dismissed_announcement_id', id);
-            if (context.mounted) Navigator.of(context).pop();
-          },
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(content),
+          actions: [
+            FilledButton(
+              onPressed: () async {
+                await prefs.setString('dismissed_announcement_id', id);
+                if (context.mounted) Navigator.of(context).pop();
+              },
+              child: const Text('知道了'),
+            ),
+          ],
         ),
       );
     } catch (_) {
-      // Announcement is optional; keep the workspace smooth if the backend has
-      // not added the endpoint yet.
+      // 公告失败不影响工具使用。
     }
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFEF4444),
+        content: Text(
+          message,
+          style: const TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+    );
   }
 
   @override
@@ -596,9 +551,7 @@ class _ToolPanelState extends State<ToolPanel> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (await _controller.canGoBack()) {
-          await _controller.goBack();
-        }
+        if (await _controller.canGoBack()) await _controller.goBack();
       },
       child: Scaffold(
         backgroundColor: Colors.white,
@@ -614,140 +567,10 @@ class _ToolPanelState extends State<ToolPanel> {
                   value: _progress / 100,
                   minHeight: 2,
                   color: Colors.black,
-                  backgroundColor: Colors.transparent,
                 ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _AnnouncementDialog extends StatelessWidget {
-  const _AnnouncementDialog({
-    required this.title,
-    required this.content,
-    required this.onClose,
-  });
-
-  final String title;
-  final String content;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 18),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(
-                    Icons.campaign_rounded,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              content,
-              style: const TextStyle(
-                color: Color(0xFF3F3F46),
-                fontSize: 15,
-                height: 1.55,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 48,
-              child: FilledButton(
-                onPressed: onClose,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: const Text(
-                  '知道了',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AuthBackdrop extends StatelessWidget {
-  const _AuthBackdrop();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF050505), Color(0xFF18181B), Color(0xFF000000)],
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: 70,
-            right: -80,
-            child: Container(
-              width: 220,
-              height: 220,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: const Color(0x22FFFFFF), width: 28),
-              ),
-            ),
-          ),
-          Positioned(
-            left: -70,
-            bottom: 100,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: const Color(0x18FFFFFF), width: 22),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -761,11 +584,11 @@ class _BrandHeader extends StatelessWidget {
     return Row(
       children: [
         ClipRRect(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(18),
           child: Image.asset(
             'assets/images/app_icon.png',
-            width: 64,
-            height: 64,
+            width: 58,
+            height: 58,
             fit: BoxFit.cover,
           ),
         ),
@@ -776,18 +599,13 @@ class _BrandHeader extends StatelessWidget {
             children: [
               Text(
                 'BS字体修符',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
               ),
               SizedBox(height: 4),
               Text(
-                '字符面板 · 字体创作台',
+                '字体创作工具',
                 style: TextStyle(
                   color: Color(0xFF6B7280),
-                  fontSize: 13,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -843,10 +661,6 @@ class _InputField extends StatelessWidget {
           borderRadius: BorderRadius.circular(18),
           borderSide: const BorderSide(color: Colors.black, width: 1.4),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 18,
-        ),
       ),
     );
   }
@@ -866,38 +680,20 @@ class _PrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 56,
+      height: 54,
       child: FilledButton(
         onPressed: loading ? null : onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: Colors.black,
-          disabledBackgroundColor: const Color(0xFF52525B),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-        ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          child: loading
-              ? const SizedBox(
-                  key: ValueKey('loading'),
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : Text(
-                  label,
-                  key: const ValueKey('label'),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                  ),
+        style: FilledButton.styleFrom(backgroundColor: Colors.black),
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
                 ),
-        ),
+              )
+            : Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
       ),
     );
   }

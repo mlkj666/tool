@@ -5,7 +5,7 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
 	<string>BS字体修符</string>
 	<key>CFBundleExecutable</key>
@@ -54,9 +54,9 @@
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄或导入需要处理的字符图片。</string>
+	<string>用于拍照导入需要处理的字符图片。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于选择需要处理的字体或字符图片。</string>
+	<string>用于从相册选择需要处理的字符图片。</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

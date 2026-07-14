@@ -138,16 +138,17 @@ header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-r
 
 @media (max-width: 800px) {
   .font-name { display: none !important; }
-  header { padding: 8px 10px; gap: 8px; min-height: auto; }
-  .header-left, .header-right { width: 100%; flex: 1 1 100%; gap: 6px; justify-content: space-between; }
-  .header-left { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
-  .header-right { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  header { padding: 8px 12px; gap: 8px; min-height: 54px; flex-wrap: nowrap; }
+  .header-left, .header-right { width: auto; flex: 0 0 auto; gap: 7px; flex-wrap: nowrap; }
+  .header-left { flex: 1 1 auto; min-width: 0; }
+  .header-right { justify-content: flex-end; }
   .header-divider { display: none; }
   header h1 { font-size: 15px; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .btn { padding: 0 8px; font-size: 12px; height: 34px; width: 100%;}
-  .btn svg { width: 14px; height: 14px; }
+  header .btn { width: 38px; height: 38px; padding: 0; border-radius: 12px; box-shadow: 0 6px 14px rgba(17,24,39,0.06); }
+  header .btn svg { width: 18px; height: 18px; }
+  header .btn .toolbar-label { display: none; }
   #txtCurrentUser { display: none !important; } /* 移动端隐藏名字，只留头像 */
-  .user-btn { padding: 0 !important; width: 34px; justify-self: end; justify-content: center; border-radius: 50%; }
+  .user-btn { padding: 0 !important; width: 38px; justify-self: end; justify-content: center; border-radius: 50%; }
 }
 
 main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
@@ -243,6 +244,19 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 .adjust-char-input { flex: 1; border: none; background: transparent; font-size: 16px; font-weight: 600; outline: none; color: var(--text-main); }
 .adjust-char-label { font-size: 14px; color: var(--text-sec); font-weight: 500; }
 .adjust-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+
+@media (max-width: 800px) {
+  #adjustModal { align-items: flex-end; background: rgba(17, 24, 39, 0.16); backdrop-filter: none; padding: 0; }
+  #adjustModal .modal { max-width: none; border-radius: 18px 18px 0 0; padding: 16px; box-shadow: 0 -12px 32px rgba(17,24,39,0.16); transform: translateY(100%); }
+  #adjustModal.show .modal { transform: translateY(0); }
+  #adjustModal h2 { font-size: 16px; margin-bottom: 10px !important; }
+  #adjustModal .adjust-preview { height: 64px; margin-bottom: 12px; }
+  #adjustModal .adjust-char-input-group { margin-bottom: 12px; padding: 10px; }
+  #adjustModal .adjust-controls { gap: 8px; }
+  #adjustModal .adjust-control-header { margin-bottom: 4px; }
+  #adjustModal input[type=range] { margin: 4px 0 8px; }
+  #adjustModal .adjust-actions { margin-top: 10px; }
+}
 
 .draw-canvas-wrap { border: 1px solid var(--border); border-radius: 12px; margin: 20px 0; background:#fff; overflow: hidden;}
 #drawCanvas { width: 100%; height: auto; aspect-ratio: 1/1; touch-action: none; display: block;}
@@ -348,17 +362,17 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
       <h1>字体修符</h1>
       <div class="header-divider"></div>
       <button class="btn" id="btnLoadFont">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导入字体
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span class="toolbar-label">导入字体</span>
       </button>
       <button class="btn" id="btnLoadImages">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>导入图片
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span class="toolbar-label">导入图片</span>
       </button>
     </div>
 
     <div class="header-right">
       <span class="font-name" id="fontName" style="font-size:12px; color:var(--text-muted); margin-right:8px;">未加载...</span>
       <button class="btn accent" id="btnExportFont" style="background:#2563EB; border-color:#2563EB;">
-         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="1"/><path d="M6 10h2M10 10h4M6 14h8"/></svg>导出字体
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="1"/><path d="M6 10h2M10 10h4M6 14h8"/></svg><span class="toolbar-label">导出字体</span>
       </button>
       
       <!-- 个人中心（移动端自动变为纯圆形） -->
@@ -982,11 +996,21 @@ $('fileFont').addEventListener('change', async e => {
   } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
 });
 
-$('btnLoadImages').addEventListener('click', () => $('imageSourceModal').classList.add('show'));
+function openNativeImagePicker(source = 'photo') {
+  if (window.NativeImagePicker && window.NativeImagePicker.postMessage) {
+    window.NativeImagePicker.postMessage(source);
+    return true;
+  }
+  return false;
+}
+
+$('btnLoadImages').addEventListener('click', () => {
+  if (!openNativeImagePicker('photo')) $('imageSourceModal').classList.add('show');
+});
 $('btnImageCancel').addEventListener('click', () => $('imageSourceModal').classList.remove('show'));
 $('imageSourceModal').addEventListener('click', e => { if (e.target === $('imageSourceModal')) $('imageSourceModal').classList.remove('show'); });
-$('btnImagePhoto').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImagesPhoto').click(); });
-$('btnImageCamera').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImagesCamera').click(); });
+$('btnImagePhoto').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); if (!openNativeImagePicker('photo')) $('fileImagesPhoto').click(); });
+$('btnImageCamera').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); if (!openNativeImagePicker('camera')) $('fileImagesCamera').click(); });
 $('btnImageFiles').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImages').click(); });
 
 async function handleImageInput(input) {
@@ -1076,6 +1100,23 @@ async function processImageFiles(files) {
   if (state.pendingAssignments.length) toast(`有 ${state.pendingAssignments.length} 张图片需要您输入字符进行绑定`);
 }
 
+window.receiveNativeImages = async function(items) {
+  try {
+    if (!Array.isArray(items) || !items.length) return;
+    const files = items.map((item, idx) => {
+      const raw = atob(item.base64 || '');
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const name = item.name || `图片_${idx + 1}.png`;
+      return new File([bytes], name, { type: item.mime || 'image/png' });
+    });
+    await processImageFiles(files);
+    toast(`成功导入 ${files.length} 张图片`, 'success');
+  } catch (err) {
+    toast('图片导入失败: ' + err.message, 'error');
+  }
+};
+
 function detectCharFromFilename(name) {
   if (!name || name.length === 0) return null;
   const chars = [...name];
@@ -1121,11 +1162,18 @@ $('btnApplyPending').addEventListener('click', () => {
 
 // ==================== 调整面板逻辑 ====================
 let currentAdjustingChar = null;
+let adjustOriginalState = null;
 
 function openAdjustModal(char) {
     currentAdjustingChar = char;
     const info = state.glyphImages[char] || state.drawnGlyphs[char];
     if (!info) return;
+    adjustOriginalState = {
+      scale: info.scale || 1.0,
+      spacing: info.spacing || 1.0,
+      xOffset: info.xOffset || 0,
+      yOffset: info.yOffset || 0
+    };
 
     dom.adjustCharInput.value = char;
     dom.adjustPreviewImg.src = info.dataUrl;
@@ -1146,9 +1194,20 @@ function openAdjustModal(char) {
     dom.adjustModal.classList.add('show');
 }
 
-function closeAdjustModal() {
+function closeAdjustModal(restore = true) {
+    if (restore && currentAdjustingChar && adjustOriginalState) {
+      const info = state.glyphImages[currentAdjustingChar] || state.drawnGlyphs[currentAdjustingChar];
+      if (info) {
+        info.scale = adjustOriginalState.scale;
+        info.spacing = adjustOriginalState.spacing;
+        info.xOffset = adjustOriginalState.xOffset;
+        info.yOffset = adjustOriginalState.yOffset;
+        schedulePreviewRender(true);
+      }
+    }
     dom.adjustModal.classList.remove('show');
     currentAdjustingChar = null;
+    adjustOriginalState = null;
 }
 
 // 滑块事件绑定
@@ -1185,7 +1244,7 @@ function updatePreviewWithAdjustments() {
     info.xOffset = parseInt(dom.rngAdjustXOffset.value);
     info.yOffset = parseInt(dom.rngAdjustYOffset.value);
     
-    renderPreview();
+    schedulePreviewRender();
 }
 
 dom.btnAdjustCancel.addEventListener('click', closeAdjustModal);
@@ -1212,8 +1271,8 @@ dom.btnAdjustApply.addEventListener('click', () => {
 
     if (appliedCount > 0) {
         toast(`已将调整应用到 ${appliedCount} 个字符`, 'success');
-        renderPreview();
-        closeAdjustModal();
+        schedulePreviewRender(true);
+        closeAdjustModal(false);
     } else {
         toast('未找到匹配的字符进行调整', 'warning');
     }
@@ -1295,10 +1354,29 @@ $('btnConfirmAddChar').addEventListener('click', () => {
 });
 
 // Slider & Color bindings 
+let previewFrame = 0;
+let previewDebounce = 0;
+function schedulePreviewRender(immediate = false) {
+  if (previewFrame) return;
+  const run = () => {
+    previewFrame = 0;
+    renderPreview();
+  };
+  if (immediate) {
+    previewFrame = requestAnimationFrame(run);
+    return;
+  }
+  clearTimeout(previewDebounce);
+  previewDebounce = setTimeout(() => {
+    previewFrame = requestAnimationFrame(run);
+  }, 18);
+}
+
 function bindSlider(id, valId, key, format) {
   $(id).addEventListener('input', () => {
-    const v = parseFloat($(id).value); state[key] = v; $(valId).textContent = format(v); renderPreview();
+    const v = parseFloat($(id).value); state[key] = v; $(valId).textContent = format(v); schedulePreviewRender();
   });
+  $(id).addEventListener('change', () => schedulePreviewRender(true));
 }
 bindSlider('rngSize', 'valSize', 'fontSize', v => v + 'px'); 
 bindSlider('rngWeight', 'valWeight', 'fontWeight', v => v);
@@ -1306,9 +1384,9 @@ bindSlider('rngSpacing', 'valSpacing', 'letterSpacing', v => v + 'px');
 bindSlider('rngBaseline', 'valBaseline', 'baselineOffset', v => v + 'px');
 bindSlider('rngLineHeight', 'valLineHeight', 'lineHeight', v => v.toFixed(1));
 
-dom.colorGlobal.addEventListener('input', (e) => { state.globalColor = e.target.value; renderPreview(); });
+dom.colorGlobal.addEventListener('input', (e) => { state.globalColor = e.target.value; schedulePreviewRender(); });
 dom.colorGlobal.addEventListener('change', (e) => { state.globalColor = e.target.value; renderPreview(); });
-$('txtPreview').addEventListener('input', () => { state.previewText = $('txtPreview').value; renderPreview(); });
+$('txtPreview').addEventListener('input', () => { state.previewText = $('txtPreview').value; schedulePreviewRender(); });
 
 // ==================== ★ Canvas 清晰度引擎与渲染 ★ ====================
 function getSafeAdvanceWidth(font, ch, fontSize) {
@@ -1435,25 +1513,32 @@ function renderPreview() {
 
 function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOriginal = false) {
   const adjustedY = y - baselineOffset; 
+  const negativeWeight = !isOriginal ? Math.min(Math.abs(Math.min(0, state.fontWeight)), 20) : 0;
   
   if (state.loadedFontFamily) {
       ctx.fillStyle = color;
       ctx.font = `${fontSize}px "${state.loadedFontFamily}", sans-serif`;
-      ctx.fillText(ch, x, adjustedY);
+      if (negativeWeight > 0) {
+          const metrics = ctx.measureText(ch);
+          const w = Math.max(metrics.width, fontSize * 0.5);
+          const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
+          const sy = Math.max(0.88, 1 - negativeWeight * 0.005);
+          ctx.save();
+          ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
+          ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
+          ctx.scale(sx, sy);
+          ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
+          ctx.fillText(ch, x, adjustedY);
+          ctx.restore();
+      } else {
+          ctx.fillText(ch, x, adjustedY);
+      }
       
       if (!isOriginal && state.fontWeight > 0) {
           ctx.strokeStyle = color; 
           ctx.lineWidth = state.fontWeight; 
           ctx.lineJoin = 'round'; 
           ctx.strokeText(ch, x, adjustedY);
-      } else if (!isOriginal && state.fontWeight < 0) {
-          ctx.save();
-          ctx.globalCompositeOperation = 'destination-out';
-          ctx.strokeStyle = '#000';
-          ctx.lineWidth = Math.abs(state.fontWeight);
-          ctx.lineJoin = 'round';
-          ctx.strokeText(ch, x, adjustedY);
-          ctx.restore();
       }
   } else {
       try {
@@ -1462,28 +1547,37 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
         if (!isOriginal && state.fontWeight > 0) { 
             path.stroke = color; path.strokeWidth = state.fontWeight;
         }
-        path.draw(ctx);
-        if (!isOriginal && state.fontWeight < 0) {
+        if (negativeWeight > 0) {
+            const w = getSafeAdvanceWidth(state.font, ch, fontSize);
+            const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
+            const sy = Math.max(0.88, 1 - negativeWeight * 0.005);
             ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
-            path.fill = null;
-            path.stroke = '#000';
-            path.strokeWidth = Math.abs(state.fontWeight);
+            ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
+            ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
+            ctx.scale(sx, sy);
+            ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
             path.draw(ctx);
             ctx.restore();
+        } else {
+            path.draw(ctx);
         }
       } catch (e) { 
-        ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; ctx.fillText(ch, x, adjustedY); 
+        ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; 
+        if (negativeWeight > 0) {
+            const w = Math.max(ctx.measureText(ch).width, fontSize * 0.5);
+            const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
+            ctx.save();
+            ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
+            ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
+            ctx.scale(sx, 1);
+            ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
+            ctx.fillText(ch, x, adjustedY);
+            ctx.restore();
+        } else {
+            ctx.fillText(ch, x, adjustedY); 
+        }
         if (!isOriginal && state.fontWeight > 0) {
             ctx.strokeStyle = color; ctx.lineWidth = state.fontWeight; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
-        } else if (!isOriginal && state.fontWeight < 0) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = Math.abs(state.fontWeight);
-            ctx.lineJoin = 'round';
-            ctx.strokeText(ch, x, adjustedY);
-            ctx.restore();
         }
       }
   }
