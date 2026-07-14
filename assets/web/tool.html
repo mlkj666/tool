@@ -108,21 +108,22 @@ header {
   padding: 10px 20px; background: var(--bg-panel); 
   border-bottom: 1px solid var(--border); box-shadow: none; 
   flex-shrink: 0; min-height: 60px; z-index: 20; 
-  overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;
-  gap: 16px;
+  overflow: visible; white-space: normal;
+  gap: 10px 16px; flex-wrap: wrap;
 }
 header::-webkit-scrollbar { display: none; }
-.header-left, .header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.header-left, .header-right { display: flex; align-items: center; gap: 10px; flex: 1 1 320px; min-width: 0; flex-wrap: wrap; }
+.header-right { justify-content: flex-end; }
 .header-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0;}
 
-header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-right: 8px; flex-shrink: 0; letter-spacing: -0.02em;}
+header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-right: 8px; flex: 0 1 auto; min-width: 0; letter-spacing: 0;}
 
 .btn { 
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; 
   padding: 0 14px; height: 36px; border-radius: 8px; font-size: 13px; font-weight: 500; 
   cursor: pointer; border: 1px solid var(--border); background: var(--bg-panel); 
   color: var(--text-main); transition: all 0.2s ease; 
-  white-space: nowrap !important; word-break: keep-all !important; flex-shrink: 0 !important;
+  white-space: nowrap !important; word-break: keep-all !important; flex: 0 1 auto; min-width: 0;
 }
 .btn:hover { background: var(--bg-hover); }
 .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -137,12 +138,16 @@ header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-r
 
 @media (max-width: 800px) {
   .font-name { display: none !important; }
-  header { padding: 8px 16px; gap: 12px; }
-  .header-left, .header-right { gap: 8px; }
-  .btn { padding: 0 12px; font-size: 13px; height: 34px;}
+  header { padding: 8px 10px; gap: 8px; min-height: auto; }
+  .header-left, .header-right { width: 100%; flex: 1 1 100%; gap: 6px; justify-content: space-between; }
+  .header-left { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+  .header-right { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .header-divider { display: none; }
+  header h1 { font-size: 15px; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn { padding: 0 8px; font-size: 12px; height: 34px; width: 100%;}
   .btn svg { width: 14px; height: 14px; }
   #txtCurrentUser { display: none !important; } /* 移动端隐藏名字，只留头像 */
-  .user-btn { padding: 0 !important; width: 34px; justify-content: center; border-radius: 50%; }
+  .user-btn { padding: 0 !important; width: 34px; justify-self: end; justify-content: center; border-radius: 50%; }
 }
 
 main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
@@ -1747,6 +1752,208 @@ function patchHmtx(fb, glyphInfoMap, upem) {
   return nHm;
 }
 
+function mergeHmtxGlyphOverrides(fb, baseHmtx, overrideHmtx, glyphInfoMap) {
+  if (!baseHmtx || !overrideHmtx) return overrideHmtx || baseHmtx || null;
+  const hhea = findFontTable(fb, 'hhea');
+  if (!hhea || hhea.offset + 36 > fb.byteLength) return overrideHmtx;
+  const numberOfHMetrics = new DataView(fb).getUint16(hhea.offset + 34, false);
+  const out = new Uint8Array(baseHmtx).slice();
+  const ov = new DataView(out.buffer);
+  const rv = new DataView(overrideHmtx.buffer || overrideHmtx, overrideHmtx.byteOffset || 0, overrideHmtx.byteLength || overrideHmtx.length);
+  for (const i in glyphInfoMap) {
+    const idx = parseInt(i);
+    if (idx < numberOfHMetrics && idx * 4 + 4 <= out.length && idx * 4 + 4 <= rv.byteLength) {
+      ov.setUint16(idx * 4, rv.getUint16(idx * 4, false), false);
+      ov.setInt16(idx * 4 + 2, rv.getInt16(idx * 4 + 2, false), false);
+    }
+  }
+  return out;
+}
+
+function findFontTable(fb, tag) {
+  const v = new DataView(fb);
+  if (fb.byteLength < 12) return null;
+  const nt = Math.min(v.getUint16(4, false), Math.floor((fb.byteLength - 12) / 16));
+  for (let i = 0; i < nt; i++) {
+    const ro = 12 + i * 16;
+    const t = String.fromCharCode(...new Uint8Array(fb, ro, 4));
+    if (t === tag) {
+      const offset = v.getUint32(ro + 8, false);
+      const length = v.getUint32(ro + 12, false);
+      if (offset + length <= fb.byteLength) return { offset, length };
+    }
+  }
+  return null;
+}
+
+function clampInt16(v) { return Math.max(-32768, Math.min(32767, Math.round(v))); }
+function clampUint16(v) { return Math.max(0, Math.min(65535, Math.round(v))); }
+
+function patchLetterSpacing(fb, extraUnits) {
+  if (!extraUnits) return null;
+  const hmtx = findFontTable(fb, 'hmtx');
+  const hhea = findFontTable(fb, 'hhea');
+  if (!hmtx || !hhea || hhea.offset + 36 > fb.byteLength) return null;
+  const v = new DataView(fb);
+  const numberOfHMetrics = v.getUint16(hhea.offset + 34, false);
+  const out = new Uint8Array(fb, hmtx.offset, hmtx.length).slice();
+  const ov = new DataView(out.buffer);
+  const count = Math.min(numberOfHMetrics, Math.floor(out.length / 4));
+  for (let i = 0; i < count; i++) {
+    ov.setUint16(i * 4, clampUint16(ov.getUint16(i * 4, false) + extraUnits), false);
+  }
+  return out;
+}
+
+function patchVerticalMetrics(fb, lineHeight, upem) {
+  if (Math.abs(lineHeight - 1.4) < 0.01) return {};
+  const out = {};
+  const hhea = findFontTable(fb, 'hhea');
+  if (hhea && hhea.length >= 10) {
+    const h = new Uint8Array(fb, hhea.offset, hhea.length).slice();
+    const hv = new DataView(h.buffer);
+    const asc = hv.getInt16(4, false);
+    const desc = hv.getInt16(6, false);
+    const baseBody = Math.max(1, asc - desc);
+    const targetTotal = Math.max(baseBody, Math.round(upem * lineHeight));
+    hv.setInt16(8, clampInt16(targetTotal - baseBody), false);
+    out.hhea = h;
+  }
+  const os2 = findFontTable(fb, 'OS/2');
+  if (os2 && os2.length >= 74) {
+    const o = new Uint8Array(fb, os2.offset, os2.length).slice();
+    const ov = new DataView(o.buffer);
+    const asc = ov.getInt16(68, false);
+    const desc = ov.getInt16(70, false);
+    const baseBody = Math.max(1, asc - desc);
+    const targetTotal = Math.max(baseBody, Math.round(upem * lineHeight));
+    ov.setInt16(72, clampInt16(targetTotal - baseBody), false);
+    out['OS/2'] = o;
+  }
+  return out;
+}
+
+function readGlyphOffsets(fb) {
+  const head = findFontTable(fb, 'head');
+  const maxp = findFontTable(fb, 'maxp');
+  const loca = findFontTable(fb, 'loca');
+  const glyf = findFontTable(fb, 'glyf');
+  if (!head || !maxp || !loca || !glyf || head.offset + 52 > fb.byteLength || maxp.offset + 6 > fb.byteLength) return null;
+  const v = new DataView(fb);
+  const numGlyphs = v.getUint16(maxp.offset + 4, false);
+  const longFormat = v.getInt16(head.offset + 50, false) === 1;
+  const offsets = new Uint32Array(numGlyphs + 1);
+  for (let i = 0; i <= numGlyphs; i++) {
+    const p = loca.offset + (longFormat ? i * 4 : i * 2);
+    if (p + (longFormat ? 4 : 2) > fb.byteLength) offsets[i] = i ? offsets[i - 1] : 0;
+    else offsets[i] = longFormat ? v.getUint32(p, false) : v.getUint16(p, false) * 2;
+  }
+  return { glyf, offsets, numGlyphs };
+}
+
+function transformSimpleGlyph(chunk, scale, riseUnits, weightUnits) {
+  if (!chunk || chunk.length < 10) return chunk;
+  const src = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  const contours = src.getInt16(0, false);
+  if (contours <= 0) return chunk;
+  let p = 10;
+  if (p + contours * 2 + 2 > chunk.length) return chunk;
+  const endPts = [];
+  for (let i = 0; i < contours; i++) endPts.push(src.getUint16(p + i * 2, false));
+  const pointCount = endPts[endPts.length - 1] + 1;
+  p += contours * 2;
+  const instructionLength = src.getUint16(p, false); p += 2;
+  if (p + instructionLength > chunk.length) return chunk;
+  const instructions = chunk.slice(p, p + instructionLength); p += instructionLength;
+
+  const flags = [];
+  while (flags.length < pointCount && p < chunk.length) {
+    const f = src.getUint8(p++);
+    flags.push(f);
+    if (f & 8) {
+      if (p >= chunk.length) return chunk;
+      const repeats = src.getUint8(p++);
+      for (let r = 0; r < repeats && flags.length < pointCount; r++) flags.push(f);
+    }
+  }
+  if (flags.length !== pointCount) return chunk;
+
+  const xs = [], ys = [];
+  let x = 0, y = 0;
+  for (let i = 0; i < pointCount; i++) {
+    const f = flags[i];
+    let dx = 0;
+    if (f & 2) { if (p >= chunk.length) return chunk; dx = src.getUint8(p++); if (!(f & 16)) dx = -dx; }
+    else if (!(f & 16)) { if (p + 2 > chunk.length) return chunk; dx = src.getInt16(p, false); p += 2; }
+    x += dx; xs.push(x);
+  }
+  for (let i = 0; i < pointCount; i++) {
+    const f = flags[i];
+    let dy = 0;
+    if (f & 4) { if (p >= chunk.length) return chunk; dy = src.getUint8(p++); if (!(f & 32)) dy = -dy; }
+    else if (!(f & 32)) { if (p + 2 > chunk.length) return chunk; dy = src.getInt16(p, false); p += 2; }
+    y += dy; ys.push(y);
+  }
+
+  const cx = (src.getInt16(2, false) + src.getInt16(6, false)) / 2;
+  let minX = 32767, minY = 32767, maxX = -32768, maxY = -32768;
+  for (let i = 0; i < pointCount; i++) {
+    const side = xs[i] >= cx ? 1 : -1;
+    xs[i] = clampInt16(xs[i] * scale + side * weightUnits);
+    ys[i] = clampInt16(ys[i] * scale + riseUnits);
+    minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i]);
+    minY = Math.min(minY, ys[i]); maxY = Math.max(maxY, ys[i]);
+  }
+
+  const size = 10 + contours * 2 + 2 + instructionLength + pointCount + pointCount * 4;
+  const out = new Uint8Array(size);
+  const ov = new DataView(out.buffer);
+  ov.setInt16(0, contours, false);
+  ov.setInt16(2, clampInt16(minX), false);
+  ov.setInt16(4, clampInt16(minY), false);
+  ov.setInt16(6, clampInt16(maxX), false);
+  ov.setInt16(8, clampInt16(maxY), false);
+  let op = 10;
+  for (let i = 0; i < contours; i++) { ov.setUint16(op, endPts[i], false); op += 2; }
+  ov.setUint16(op, instructionLength, false); op += 2;
+  out.set(instructions, op); op += instructionLength;
+  for (let i = 0; i < pointCount; i++) out[op++] = flags[i] & 1;
+  let lastX = 0, lastY = 0;
+  for (let i = 0; i < pointCount; i++) { ov.setInt16(op, clampInt16(xs[i] - lastX), false); op += 2; lastX = xs[i]; }
+  for (let i = 0; i < pointCount; i++) { ov.setInt16(op, clampInt16(ys[i] - lastY), false); op += 2; lastY = ys[i]; }
+  return out;
+}
+
+function buildGlyphTransformMap(fb, scale, riseUnits, weightUnits) {
+  if (Math.abs(scale - 1) < 0.001 && !riseUnits && !weightUnits) return {};
+  const info = readGlyphOffsets(fb);
+  if (!info) return {};
+  const map = {};
+  for (let i = 0; i < info.numGlyphs; i++) {
+    const start = info.offsets[i], end = info.offsets[i + 1];
+    if (end <= start) continue;
+    const safeStart = Math.min(info.glyf.offset + start, fb.byteLength);
+    const safeEnd = Math.min(info.glyf.offset + end, fb.byteLength);
+    const original = new Uint8Array(fb, safeStart, safeEnd - safeStart);
+    const changed = transformSimpleGlyph(original, scale, riseUnits, weightUnits);
+    if (changed !== original) map[i] = changed;
+  }
+  return map;
+}
+
+function buildExportAdjustments(fb) {
+  const upem = state.font?.unitsPerEm || 1000;
+  const scale = Math.max(0.2, Math.min(4, state.fontSize / 36));
+  const riseUnits = Math.round((state.baselineOffset / Math.max(1, state.fontSize)) * upem);
+  const weightUnits = Math.round((state.fontWeight / Math.max(1, state.fontSize)) * upem * 0.45);
+  const spacingUnits = Math.round((state.letterSpacing / Math.max(1, state.fontSize)) * upem);
+  const glyphMap = buildGlyphTransformMap(fb, scale, riseUnits, weightUnits);
+  const tables = patchVerticalMetrics(fb, state.lineHeight, upem);
+  const hmtx = patchLetterSpacing(fb, spacingUnits);
+  if (hmtx) tables.hmtx = hmtx;
+  return { glyphMap, tables };
+}
+
 function buildCpalBinary(pc){const b=new ArrayBuffer(14+pc.length*4),v=new DataView(b);v.setUint16(0,0,false);v.setUint16(2,pc.length,false);v.setUint16(4,1,false);v.setUint16(6,pc.length,false);v.setUint32(8,14,false);v.setUint16(12,0,false);for(let i=0;i<pc.length;i++){v.setUint8(14+i*4,pc[i].b);v.setUint8(15+i*4,pc[i].g);v.setUint8(16+i*4,pc[i].r);v.setUint8(17+i*4,pc[i].a);}return b;}
 function buildColrBinary(br,lr){const b=new ArrayBuffer(14+br.length*6+lr.length*4),v=new DataView(b);v.setUint16(0,0,false);v.setUint16(2,br.length,false);v.setUint32(4,14,false);v.setUint32(8,14+br.length*6,false);v.setUint16(12,lr.length,false);for(let i=0;i<br.length;i++){v.setUint16(14+i*6,br[i].glyphID,false);v.setUint16(16+i*6,br[i].firstLayerIndex,false);v.setUint16(18+i*6,br[i].numLayers,false);}for(let i=0;i<lr.length;i++){v.setUint16(14+br.length*6+i*4,lr[i].glyphID,false);v.setUint16(16+br.length*6+i*4,lr[i].paletteIndex,false);}return b;}
 function base64ToUint8Array(b64){const bS=atob(b64),b=new Uint8Array(bS.length);for(let i=0;i<bS.length;i++)b[i]=bS.charCodeAt(i);return b;}
@@ -1781,7 +1988,13 @@ $('btnExportFont').addEventListener('click', async () => {
   if (!state.font) return toast('执行中断：未检测到导入的字体', 'error');
   const rep=new Set([...Object.keys(state.glyphImages),...Object.keys(state.drawnGlyphs)]), col=Object.entries(state.perCharColors);
   const expGlo=state.globalColor.toUpperCase()!=='#111827'&&state.globalColor.toUpperCase()!=='#000000';
-  if(rep.size===0&&col.length===0&&!expGlo){ downloadBlob(new Blob([state.fontBuffer.slice(0)],{type:'font/ttf'}),(state.fontName||'font')+'.ttf'); toast('由于您未进行修改，已导出原字体', 'success'); return; }
+  const hasLayoutAdjust =
+    Math.abs(state.fontSize - 36) > 0.01 ||
+    Math.abs(state.fontWeight) > 0.01 ||
+    Math.abs(state.letterSpacing) > 0.01 ||
+    Math.abs(state.baselineOffset) > 0.01 ||
+    Math.abs(state.lineHeight - 1.4) > 0.01;
+  if(rep.size===0&&col.length===0&&!expGlo&&!hasLayoutAdjust){ downloadBlob(new Blob([state.fontBuffer.slice(0)],{type:'font/ttf'}),(state.fontName||'font')+'.ttf'); toast('由于您未进行修改，已导出原字体', 'success'); return; }
 
   $('btnExportFont').disabled=true; dom.exportModal.classList.add('show'); dom.exportProgressBar.style.width='0%';
   dom.exportProgressText.textContent='正在准备导出引擎...'; await yieldThread();
@@ -1816,13 +2029,17 @@ $('btnExportFont').addEventListener('click', async () => {
     dn++; dom.exportProgressBar.style.width=`${(dn/rep.size)*100}%`;
   }
 
+  dom.exportProgressText.textContent='正在写入排版参数...'; await yieldThread();
+  const adjust = hasLayoutAdjust ? buildExportAdjustments(state.fontBuffer) : { glyphMap: {}, tables: {} };
+  if (hasLayoutAdjust) c += Object.keys(adjust.glyphMap).length + Object.keys(adjust.tables).length;
+
   dom.exportProgressText.textContent='正在对齐色彩参数...'; await yieldThread();
-  const inj={}; 
+  const inj={...adjust.tables}; 
   if(Object.keys(gPm).length>0){
       // 传递包含调整参数的映射给构建函数
       inj['sbix']=buildSbixBinary(nG,gPm);
       const nh=patchHmtx(state.fontBuffer,gPm,state.font.unitsPerEm||1000);
-      if(nh)inj['hmtx']=nh;
+      if(nh)inj['hmtx']=mergeHmtxGlyphOverrides(state.fontBuffer, inj['hmtx'], nh, gPm);
   }
   if(col.length>0||expGlo){
     const pc=[], ht={}, gp=(hx)=>{const u=hx.toUpperCase();if(ht[u]!==undefined)return ht[u];pc.push({r:parseInt(u.slice(1,3),16),g:parseInt(u.slice(3,5),16),b:parseInt(u.slice(5,7),16),a:255});ht[u]=pc.length-1;return pc.length-1;};
@@ -1837,7 +2054,8 @@ $('btnExportFont').addEventListener('click', async () => {
   dom.exportProgressText.innerHTML='进行系统安全容器封装...<br><span style="color:#10B981;font-weight:600;">保留物理级清晰度</span>'; await yieldThread();
   try {
     let ob=state.fontBuffer.slice(0);
-    if(Object.keys(gDm).length>0){const pt=fastPatchGlyf(ob,gDm);if(pt){inj['glyf']=pt.glyf;inj['loca']=pt.loca;inj['head']=pt.head;}else{toast('提示: 检测到不兼容底包，部分特性可能丢失','info');}}
+    const glyfMap = {...adjust.glyphMap, ...gDm};
+    if(Object.keys(glyfMap).length>0){const pt=fastPatchGlyf(ob,glyfMap);if(pt){inj['glyf']=pt.glyf;inj['loca']=pt.loca;inj['head']=pt.head;}else{toast('提示: 检测到不兼容底包，部分特性可能丢失','info');}}
     if(Object.keys(inj).length>0) ob=injectTablesSorted(ob,inj);
     downloadBlob(new Blob([ob],{type:'font/ttf'}),(state.fontName||'font').replace(/\.(ttf|otf|woff2?)$/i,'')+'-MOD.ttf');
     toast(`导出成功！共修改了 ${c} 处字符。`, 'success');
