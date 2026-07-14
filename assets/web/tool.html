@@ -1,0 +1,1747 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>BS字体修符</title>
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+:root {
+  --bg-app: #F9FAFB;
+  --bg-panel: #FFFFFF;
+  --bg-hover: #F3F4F6;
+  --bg-control: #F3F4F6;
+  --border: #E5E7EB;
+  --text-main: #111827;
+  --text-sec: #4B5563;
+  --text-muted: #9CA3AF;
+  --accent: #111827;     
+  --accent-hover: #374151;
+  --accent-blue: #2563EB; 
+  --danger: #EF4444;
+  
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 20px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.4); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(107, 114, 128, 0.7); }
+
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent;}
+
+/* 视口锁死机制 */
+html, body {
+  width: 100%; height: 100%; position: fixed; top: 0; left: 0; 
+  overflow: hidden; touch-action: none; 
+  font-family: var(--font); background: var(--bg-app); color: var(--text-main);
+}
+
+/* ================= 丝滑且不臃肿的 Toast ================= */
+.toast-container { 
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%); 
+  display: flex; flex-direction: column; gap: 10px; z-index: 99999; pointer-events: none; 
+  width: 100%; max-width: 380px; padding: 0 16px; box-sizing: border-box; align-items: center;
+}
+.toast { 
+  display: flex; align-items: flex-start; gap: 10px; 
+  background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); 
+  color: var(--text-main); padding: 14px 18px; border-radius: 12px; 
+  font-size: 14px; font-weight: 500; box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.1); 
+  border: 1px solid rgba(255,255,255,0.6); width: 100%; text-align: left; line-height: 1.5; word-break: break-word;
+  animation: toastEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.toast svg { flex-shrink: 0; margin-top: 2px; }
+.toast.leaving { animation: toastLeave 0.3s cubic-bezier(0.4, 0, 1, 1) forwards; }
+@keyframes toastEnter { 0% { opacity: 0; transform: translateY(-20px) scale(0.95); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes toastLeave { 0% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(0.95); } }
+
+/* ================= 视口切换 ================= */
+.view-container { position: absolute; inset: 0; display: flex; transition: opacity 0.4s ease, transform 0.4s ease; }
+.view-hidden { opacity: 0; transform: scale(0.98); pointer-events: none; z-index: 1; }
+.view-active { opacity: 1; transform: scale(1); pointer-events: all; z-index: 2; }
+
+/* ================= 登录界面 ================= */
+.auth-wrapper { flex-direction: row; background: #ffffff; }
+.auth-brand { flex: 1.2; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); color: white; padding: 40px; }
+.auth-brand::after { content: ''; position: absolute; width: 600px; height: 600px; background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%); top: -100px; right: -100px; border-radius: 50%; }
+.auth-glass { background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.2); padding: 48px; border-radius: 32px; max-width: 480px; z-index: 10; box-shadow: 0 30px 60px -12px rgba(0,0,0,0.2); }
+.auth-glass h1 { font-size: 36px; font-weight: 800; margin-bottom: 16px; letter-spacing: -0.03em; }
+.auth-glass p { font-size: 16px; line-height: 1.6; color: rgba(255,255,255,0.85); }
+
+.auth-form-container { flex: 1; display: flex; align-items: center; justify-content: center; background: #fff; padding: 40px; }
+.auth-card { width: 100%; max-width: 380px; }
+.auth-card h2 { font-size: 28px; font-weight: 700; color: var(--text-main); margin-bottom: 8px; letter-spacing: -0.02em; }
+.auth-card p { font-size: 14px; color: var(--text-sec); margin-bottom: 40px; }
+
+.input-float { position: relative; margin-bottom: 24px; text-align: left; }
+.input-float input { width: 100%; padding: 18px 20px; border: 2px solid var(--border); border-radius: 14px; background: #fff; font-size: 15px; color: var(--text-main); outline: none; transition: all 0.3s ease; }
+.input-float label { position: absolute; left: 20px; top: 20px; font-size: 15px; color: var(--text-muted); transition: all 0.3s ease; pointer-events: none; background: #fff; padding: 0 6px; border-radius: 4px; }
+.input-float input:focus, .input-float input:not(:placeholder-shown) { border-color: var(--accent-blue); }
+.input-float input:focus + label, .input-float input:not(:placeholder-shown) + label { transform: translateY(-28px) scale(0.85); color: var(--accent-blue); font-weight: 600; }
+
+.btn-auth { width: 100%; padding: 16px; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; border: none; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn-auth:disabled { opacity: 0.7; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:not(:disabled):hover { background: var(--accent-hover); transform: translateY(-2px); }
+
+.switch-mode { margin-top: 24px; text-align: center; font-size: 14px; color: var(--text-sec); cursor: pointer; display: inline-block; width: 100%; transition: color 0.2s; }
+.switch-mode:hover { color: var(--accent-blue); font-weight: 600; }
+
+.spinner { animation: rotate 2s linear infinite; width: 18px; height: 18px; }
+.spinner .path { stroke: currentColor; stroke-linecap: round; animation: dash 1.5s ease-in-out infinite; }
+@keyframes rotate { 100% { transform: rotate(360deg); } }
+@keyframes dash { 0% { stroke-dasharray: 1, 150; stroke-dashoffset: 0; } 50% { stroke-dasharray: 90, 150; stroke-dashoffset: -35; } 100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124; } }
+
+@media (max-width: 800px) { .auth-brand { display: none; } }
+
+/* ================= 核心工具界面样式 ================= */
+#toolView { flex-direction: column; }
+
+/* ★★★ 极致净化的防挤压顶部工具栏 ★★★ */
+header { 
+  display: flex; align-items: center; justify-content: space-between; 
+  padding: 10px 20px; background: var(--bg-panel); 
+  border-bottom: 1px solid var(--border); box-shadow: none; 
+  flex-shrink: 0; min-height: 60px; z-index: 20; 
+  overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch;
+  gap: 16px;
+}
+header::-webkit-scrollbar { display: none; }
+.header-left, .header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.header-divider { width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0;}
+
+header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-right: 8px; flex-shrink: 0; letter-spacing: -0.02em;}
+
+.btn { 
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; 
+  padding: 0 14px; height: 36px; border-radius: 8px; font-size: 13px; font-weight: 500; 
+  cursor: pointer; border: 1px solid var(--border); background: var(--bg-panel); 
+  color: var(--text-main); transition: all 0.2s ease; 
+  white-space: nowrap !important; word-break: keep-all !important; flex-shrink: 0 !important;
+}
+.btn:hover { background: var(--bg-hover); }
+.btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.accent:hover { background: var(--accent-hover); }
+.btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn.danger:hover { background: var(--danger); color: #fff; }
+.btn.small { padding: 0 12px; height: 32px; font-size: 13px; }
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.user-btn { background: #EFF6FF; border-color: #BFDBFE; color: #1E40AF; border-radius: 100px; padding: 0 14px; }
+.user-btn:hover { background: #DBEAFE; border-color: #93C5FD; }
+
+@media (max-width: 800px) {
+  .font-name { display: none !important; }
+  header { padding: 8px 16px; gap: 12px; }
+  .header-left, .header-right { gap: 8px; }
+  .btn { padding: 0 12px; font-size: 13px; height: 34px;}
+  .btn svg { width: 14px; height: 14px; }
+  #txtCurrentUser { display: none !important; } /* 移动端隐藏名字，只留头像 */
+  .user-btn { padding: 0 !important; width: 34px; justify-content: center; border-radius: 50%; }
+}
+
+main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
+.sidebar, .right-panel { background: var(--bg-panel); overflow-y: auto; padding: 24px 24px; display: flex; flex-direction: column; gap: 28px; }
+
+@media (min-width: 1024px) { 
+  .sidebar { width: 320px; border-right: 1px solid var(--border); flex-shrink: 0; } 
+  .right-panel { width: 340px; border-left: 1px solid var(--border); flex-shrink: 0; } 
+  .mobile-toolbar, .sheet-backdrop, .sheet-header { display: none !important; }
+}
+
+.engineering-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.engineering-grid .btn { width: 100%; display: flex; justify-content: center;}
+.engineering-grid .btn.full { grid-column: span 2; }
+
+.section-title { font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 700; display: flex; align-items: center; }
+.section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); margin-left: 12px; }
+
+.val-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.val-row label { font-size: 14px; color: var(--text-sec); font-weight: 500; }
+.val { font-size: 13px; font-weight: 600; padding: 3px 8px; background: var(--bg-app); border-radius: 6px; color: var(--text-main); font-variant-numeric: tabular-nums; border: 1px solid var(--border); }
+
+/* 滑块防误触优化 */
+input[type=range] { 
+  -webkit-appearance: none; width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; outline: none; margin: 6px 0 16px; 
+  touch-action: none; 
+}
+input[type=range]::-webkit-slider-thumb { 
+  -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; 
+  background: #fff; border: 2px solid var(--accent); cursor: pointer; 
+  transition: transform 0.15s; 
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+input[type=color] { -webkit-appearance: none; appearance: none; width: 40px; height: 32px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: #fff; padding: 3px; }
+input[type=color]::-webkit-color-swatch-wrapper { padding: 0; } 
+input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
+
+.color-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.color-row span { font-size: 14px; font-weight: 500; color: var(--text-sec); }
+.add-color-group { display: flex; gap: 8px; margin-top: 12px; background: var(--bg-app); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+/* ★ 多字符输入框优化 */
+.add-color-group input[type="text"] { flex: 1; padding: 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; outline: none; font-size: 15px; font-weight: 600; }
+.add-color-group input[type="text"]:focus { border-color: var(--accent-blue); }
+.char-color-list { max-height: 200px; overflow-y: auto; margin-top: 12px; }
+.char-color-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+.char-color-item:last-child { border-bottom: none; }
+.char-color-item .remove-btn { cursor: pointer; color: var(--text-muted); border:none; background:none; font-size: 16px; padding: 4px; border-radius: 4px; transition: 0.2s; display: flex; align-items: center; }
+.char-color-item .remove-btn:hover { background: #FEF2F2; color: var(--danger); }
+
+/* 画布区域 */
+.preview-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-app); overflow: hidden; }
+.preview-toolbar { padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--bg-panel); display: flex; z-index: 10; flex-shrink: 0;}
+.preview-toolbar input[type="text"] { flex: 1; background: var(--bg-control); border: 1px solid transparent; border-radius: 10px; padding: 12px 20px; outline: none; font-size: 16px; transition: all 0.2s; }
+.preview-toolbar input[type="text"]:focus { background: #fff; border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.preview-canvas-wrap { flex: 1; overflow: auto; padding: 32px; text-align: center; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; -webkit-overflow-scrolling: touch; }
+
+.glyph-list { display: flex; flex-direction: column; gap: 12px; }
+.glyph-item { display: flex; align-items: center; gap: 14px; padding: 12px; background: #fff; border-radius: var(--radius-sm); border: 1px solid var(--border); transition: 0.2s; }
+.glyph-item:hover { border-color: var(--border-focus); transform: translateY(-1px); }
+.glyph-item img { width: 42px; height: 42px; object-fit: contain; background: var(--bg-app); border-radius: 8px; border:1px solid var(--border); padding: 4px;}
+.glyph-info { flex: 1; min-width: 0; } .glyph-label { font-size: 14px; font-weight: 600; color: var(--text-main); } .glyph-type { font-size: 12px; color: var(--accent-blue); margin-top: 4px; font-weight: 500;}
+
+.pending-assign { background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: var(--radius-sm); padding: 20px; }
+.pending-assign h4 { font-size: 14px; margin-bottom: 16px; color: var(--accent-blue); font-weight: 600; }
+.pending-item { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.pending-item img { width: 36px; height: 36px; object-fit: contain; background: #fff; border-radius: 8px; border:1px solid #BFDBFE;}
+.pending-item input { width: 52px; background: #fff; border: 1px solid #93C5FD; border-radius: 8px; color: var(--text-main); font-size: 15px; padding: 8px; text-align: center; outline: none; font-weight: 600; }
+.pending-item input:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.pending-item .pending-name { font-size: 13px; color: var(--text-sec); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ================= 模态框统一处理 ================= */
+.modal-overlay { display: none; opacity: 0; position: fixed; inset: 0; background: rgba(17, 24, 39, 0.6); z-index: 99999; align-items: center; justify-content: center; backdrop-filter: blur(6px); transition: opacity 0.3s; padding: 20px; box-sizing: border-box;}
+.modal-overlay.show { display: flex; opacity: 1; }
+.modal { background: var(--bg-panel); border-radius: var(--radius-lg); padding: 24px; width: 100%; max-width: 400px; transform: scale(0.95); transition: transform 0.3s ease; box-sizing: border-box; }
+.modal-overlay.show .modal { transform: scale(1); }
+
+/* 导出面板 */
+#exportModal .modal { max-width: 320px; text-align: center; padding: 32px 24px; }
+.export-progress-track { width: 100%; background: #E5E7EB; border-radius: 8px; height: 6px; margin: 20px 0 12px; overflow: hidden;}
+.export-progress-fill { width: 0%; height: 100%; background: var(--accent-blue); transition: width 0.15s ease-out; }
+
+/* 调整面板 */
+#adjustModal .modal { max-width: 400px; }
+.adjust-preview { display: flex; justify-content: center; align-items: center; height: 120px; background: var(--bg-app); border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: 20px; overflow: hidden; }
+.adjust-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.adjust-controls { display: flex; flex-direction: column; gap: 16px; }
+.adjust-control-group { display: flex; flex-direction: column; }
+.adjust-control-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.adjust-control-label { font-size: 14px; font-weight: 500; color: var(--text-sec); }
+.adjust-control-value { font-size: 13px; font-weight: 600; color: var(--text-main); font-variant-numeric: tabular-nums; }
+.adjust-char-input-group { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; background: var(--bg-app); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.adjust-char-input { flex: 1; border: none; background: transparent; font-size: 16px; font-weight: 600; outline: none; color: var(--text-main); }
+.adjust-char-label { font-size: 14px; color: var(--text-sec); font-weight: 500; }
+.adjust-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
+
+.draw-canvas-wrap { border: 1px solid var(--border); border-radius: 12px; margin: 20px 0; background:#fff; overflow: hidden;}
+#drawCanvas { width: 100%; height: auto; aspect-ratio: 1/1; touch-action: none; display: block;}
+
+/* ================= 移动端：完全扁平化、底栏收纳 ================= */
+@media (max-width: 1023px) {
+  main.tool-main { 
+    position: absolute; top: 56px; left: 0; right: 0; bottom: 0; 
+    flex-direction: column; padding-bottom: 60px; 
+  }
+  .preview-area { flex: 1; height: 100%; width: 100%; }
+  
+  /* 纯白扁平底边栏 */
+  .mobile-toolbar {
+    display: flex; flex-direction: row; position: absolute; bottom: 0; left: 0; width: 100%; 
+    z-index: 50; background: #ffffff; border-top: 1px solid var(--border);
+    justify-content: space-around; padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box; box-shadow: none;
+  }
+  .m-tool-btn {
+    background: transparent; border: none; display: flex; flex-direction: column;
+    align-items: center; gap: 4px; font-size: 11px; color: var(--text-sec); font-weight: 600; cursor: pointer;
+    padding: 10px 16px; border-radius: 12px; transition: 0.2s;
+  }
+  .m-tool-btn:active { background: var(--bg-hover); }
+  .m-tool-btn svg { width: 20px; height: 20px; color: var(--text-sec); transition: 0.2s;}
+  .m-tool-btn.active { color: var(--accent-blue); }
+  .m-tool-btn.active svg { color: var(--accent-blue); transform: translateY(-2px); }
+
+  /* 半屏抽屉 */
+  .sidebar, .right-panel {
+    position: fixed; bottom: 0; left: 0; width: 100vw; 
+    height: 50vh; max-height: 50vh; box-sizing: border-box;
+    border-radius: 24px 24px 0 0; z-index: 1000; 
+    transform: translateY(150%); opacity: 0; visibility: hidden;
+    transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
+    padding: 0 24px calc(24px + env(safe-area-inset-bottom));
+    border: none; display: flex; flex-direction: column;
+    background: var(--bg-panel); overscroll-behavior-y: contain; 
+    overflow-x: hidden; touch-action: pan-y; box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+  }
+  .sidebar.show, .right-panel.show { transform: translateY(0); opacity: 1; visibility: visible; }
+  
+  .sheet-header {
+    display: flex; flex-direction: column; align-items: center; padding: 12px 0 16px;
+    margin: 0 -24px 16px; background: var(--bg-panel); border-radius: 24px 24px 0 0;
+    position: sticky; top: 0; z-index: 10; cursor: pointer; border-bottom: 1px solid var(--border);
+  }
+  .sheet-handle { width: 36px; height: 4px; background: #D1D5DB; border-radius: 2px; margin-bottom: 8px; }
+  .sheet-close-text { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+
+  .sheet-backdrop {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.05); z-index: 998;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+  }
+  .sheet-backdrop.show { opacity: 1; pointer-events: all; }
+}
+</style>
+</head>
+<body>
+
+<div id="toast-container" class="toast-container"></div>
+
+<!-- 1. 登录注册页面 (Auth View) -->
+<div id="authView" class="view-container view-hidden auth-wrapper">
+  <div class="auth-brand">
+    <div class="auth-glass">
+      <h1>Font Studio.</h1>
+      <p>重新定义矢量轮廓与色彩映射。<br>在这里，每一处修改都将被无损地封装进您的专属字体中。</p>
+    </div>
+  </div>
+  
+  <div class="auth-form-container">
+    <div class="auth-card" id="authFormState">
+       <h2 id="authTitle">欢迎回来</h2>
+       <p id="authSub">登录您的云端创作台</p>
+       
+       <div class="input-float">
+          <input type="text" id="inpUser" placeholder=" " required autocomplete="off">
+          <label>账号</label>
+       </div>
+       <div class="input-float">
+          <input type="password" id="inpPass" placeholder=" " required autocomplete="off">
+          <label>密码</label>
+       </div>
+       <div class="input-float" id="wrapLicense" style="display: none; transform: scaleY(0); transform-origin: top; transition: all 0.3s ease; opacity: 0; height: 0;">
+          <input type="text" id="inpLicense" placeholder=" " required autocomplete="off">
+          <label>授权卡密</label>
+       </div>
+       
+       <button id="btnSubmitAuth" class="btn-auth btn-primary">登录</button>
+       <span class="switch-mode" id="btnSwitchMode">没有账号？去注册 →</span>
+    </div>
+  </div>
+</div>
+
+<!-- 2. 主工具页面 (Tool View) -->
+<div id="toolView" class="view-container view-active">
+  
+  <!-- ★ 极简净化的防挤压顶部工具栏 ★ -->
+  <header>
+    <div class="header-left">
+      <h1>字体修符</h1>
+      <div class="header-divider"></div>
+      <button class="btn" id="btnLoadFont">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>导入字体
+      </button>
+      <button class="btn" id="btnLoadImages">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>导入图片
+      </button>
+    </div>
+
+    <div class="header-right">
+      <span class="font-name" id="fontName" style="font-size:12px; color:var(--text-muted); margin-right:8px;">未加载...</span>
+      <button class="btn accent" id="btnExportFont" style="background:#2563EB; border-color:#2563EB;">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="1"/><path d="M6 10h2M10 10h4M6 14h8"/></svg>导出字体
+      </button>
+      
+      <!-- 个人中心（移动端自动变为纯圆形） -->
+      <button id="btnUserProfile" class="btn user-btn" style="display:none;">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+         <span id="txtCurrentUser" style="margin-left: 6px;"></span>
+      </button>
+    </div>
+  </header>
+
+  <main class="tool-main">
+    <div class="sheet-backdrop" id="sheetBackdrop"></div>
+
+    <section class="preview-area" id="previewArea">
+      <div class="preview-toolbar">
+        <input type="text" id="txtPreview" placeholder="在此输入预览测试文本..." value="你好世界 Hello 字体修符!">
+      </div>
+      <div class="preview-canvas-wrap" id="canvasWrap">
+        <canvas class="preview-canvas" id="previewCanvas"></canvas>
+      </div>
+    </section>
+
+    <!-- ★ 左侧：字体排版（融合了工程配置） -->
+    <aside class="sidebar" id="panelSidebar">
+      <div class="sheet-header" id="closeSidebarBtn">
+        <div class="sheet-handle"></div>
+        <div class="sheet-close-text">向下划动或点击收起面板</div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">高级配置</div>
+        <div class="engineering-grid">
+           <button class="btn small" id="btnLoadZip">导入 ZIP 包</button>
+           <button class="btn small" id="btnLoadConfig">导入配置</button>
+           <button class="btn small accent full" id="btnExport" style="background:#111827;">保存当前配置 (.json)</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">字体排版</div>
+        <div class="val-row"><label>字号</label><span class="val" id="valSize">36px</span></div>
+        <input type="range" id="rngSize" min="8" max="200" value="36" step="1">
+        <div class="val-row"><label>粗细</label><span class="val" id="valWeight">0</span></div>
+        <input type="range" id="rngWeight" min="0" max="20" value="0" step="0.5">
+        <div class="val-row"><label>字间距</label><span class="val" id="valSpacing">0px</span></div>
+        <input type="range" id="rngSpacing" min="-20" max="60" value="0" step="1">
+        <div class="val-row"><label>基线偏移</label><span class="val" id="valBaseline">0px</span></div>
+        <input type="range" id="rngBaseline" min="-40" max="40" value="0" step="1">
+        <div class="val-row"><label>行距</label><span class="val" id="valLineHeight">1.4</span></div>
+        <input type="range" id="rngLineHeight" min="0.8" max="3" value="1.4" step="0.1">
+      </div>
+
+      <div class="section">
+        <div class="section-title">颜色设置</div>
+        <div class="color-row">
+          <span>全局颜色</span>
+          <input type="color" id="colorGlobal" value="#111827">
+        </div>
+        <div class="color-row" style="margin-top:16px;">
+          <span>指定字符颜色</span>
+          <button class="btn small" id="btnToggleAddColor" style="background:#fff">+ 添加颜色</button>
+        </div>
+        <div id="addCharColorPanel" class="add-color-group" style="display:none;">
+          <input type="text" id="newCharInput" placeholder="输入多个字符" style="flex:1;">
+          <input type="color" id="newCharColor" value="#2563EB">
+          <button class="btn small accent" id="btnConfirmAddChar">确认</button>
+        </div>
+        <div class="char-color-list" id="charColorList"></div>
+      </div>
+    </aside>
+
+    <!-- ★ 右侧：图片与手绘 -->
+    <aside class="right-panel" id="panelRight">
+      <div class="sheet-header" id="closeRightBtn">
+        <div class="sheet-handle"></div>
+        <div class="sheet-close-text">向下划动或点击收起面板</div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">手绘文字</div>
+        <button class="btn" id="btnOpenDraw" style="width:100%; border-color:var(--text-main); font-weight:600; padding:12px;">打开手绘板</button>
+      </div>
+
+      <div class="section" style="margin-top: 16px;">
+        <div class="section-title">已导入的图片</div>
+        <div class="glyph-list" id="glyphList">
+          <div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px 10px;">目前没有导入图片。</div>
+        </div>
+      </div>
+      
+      <div class="section" id="pendingSection" style="display:none; margin-top: 16px;">
+        <div class="pending-assign">
+          <h4 style="font-size:14px; color:var(--accent-blue); margin-bottom:16px;">待绑定字符的图片</h4>
+          <div id="pendingList"></div>
+          <button class="btn accent small" id="btnApplyPending" style="margin-top:12px; width:100%; padding:10px;">确认绑定所有图片</button>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- 移动端底边栏 -->
+    <div class="mobile-toolbar" id="mobileToolbar">
+      <button class="m-tool-btn" data-target="panelSidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        字体排版
+      </button>
+      <button class="m-tool-btn" data-target="panelRight">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        图片与手绘
+      </button>
+    </div>
+
+  </main>
+</div>
+
+<!-- ================= Modals ================= -->
+<!-- ★ 个人中心弹窗：将后台管理和退出收纳于此 ★ -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal" style="max-width: 320px; padding: 24px;">
+    <h2 style="text-align: center; margin-bottom: 4px; font-size:18px;">个人中心</h2>
+    <p style="text-align: center; font-size: 13px; color: var(--text-sec); margin-bottom: 20px;">您的云端授权状态</p>
+    
+    <div style="background: var(--bg-app); padding: 16px; border-radius: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;">
+       <div style="display:flex; justify-content:space-between; align-items: center;">
+         <span style="color:var(--text-sec); font-size: 13px;">系统账号</span>
+         <strong id="profileUsername" style="color:var(--text-main); font-size: 14px;">...</strong>
+       </div>
+       <div style="display:flex; justify-content:space-between; align-items: center;">
+         <span style="color:var(--text-sec); font-size: 13px;">账号层级</span>
+         <strong id="profileRole" style="color:var(--accent-blue); background: #EFF6FF; padding: 2px 8px; border-radius: 6px; font-size: 12px;">...</strong>
+       </div>
+       <div style="display:flex; justify-content:space-between; align-items: center;">
+         <span style="color:var(--text-sec); font-size: 13px;">到期时间</span>
+         <strong id="profileExpire" style="font-size: 13px; font-family: monospace;">...</strong>
+       </div>
+       <div style="display:flex; justify-content:space-between; align-items: center;">
+         <span style="color:var(--text-sec); font-size: 13px;">剩余额度</span>
+         <strong id="profileRemain" style="font-size: 14px;">...</strong>
+       </div>
+    </div>
+    
+    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+       <button class="btn" id="btnAdminPanel" style="display:none; border-color:var(--accent-blue); color:var(--accent-blue); width: 100%;">前往后台管理</button>
+       <button class="btn danger" id="btnLogout" style="width: 100%;">退出当前账号</button>
+       <button class="btn" id="btnProfileClose" style="width: 100%; border:none; background:transparent; color:var(--text-sec); box-shadow:none;">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="exportModal">
+  <div class="modal" style="max-width: 320px; text-align: center; padding: 32px 24px;">
+    <div class="export-icon-wrap" style="width: 48px; height: 48px; border-radius: 50%; background: #EFF6FF; display: flex; align-items: center; justify-content: center; margin: 0 auto;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:24px;height:24px;color:var(--accent-blue);"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+    </div>
+    <h3 style="font-size: 18px; font-weight: 700; margin: 16px 0 0; color: var(--text-main); text-align:center;">正在生成字体</h3>
+    <div class="export-progress-track">
+      <div id="exportProgressBar" class="export-progress-fill"></div>
+    </div>
+    <div id="exportProgressText" style="font-size: 13px; color: var(--text-sec); font-weight: 500; text-align:center;">处理中...</div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="drawModal">
+  <div class="modal" style="max-width: 480px;">
+    <h2>手绘板</h2>
+    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--bg-app); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+      <input type="range" id="drawSize" min="1" max="30" value="6" style="width:100px; margin:0;">
+      <span id="valDrawSize" style="font-size:13px; font-weight:600; margin-right:auto">6px</span>
+      <input type="color" id="drawColor" value="#111827">
+      <button class="btn small" id="btnEraser">橡皮擦</button>
+      <button class="btn small danger" id="btnDrawClear">重置画板</button>
+    </div>
+    <div class="draw-canvas-wrap">
+      <canvas id="drawCanvas"></canvas>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; margin-top:8px;">
+      <label style="font-size: 14px; font-weight: 600;">绑定至字符</label>
+      <input type="text" id="drawChar" maxlength="2" placeholder="输入" style="width:80px; padding:10px; border:1px solid var(--border); border-radius:var(--radius-sm); text-align:center; font-size:16px; font-weight:bold;">
+      <button class="btn accent" id="btnDrawApply" style="margin-left:auto; padding:10px 20px;">确认保存</button>
+    </div>
+    <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+      <button class="btn" id="btnDrawClose" style="border:none; box-shadow:none; color:var(--text-sec);">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新增：调整面板模态框 -->
+<div class="modal-overlay" id="adjustModal">
+  <div class="modal">
+    <h2 style="margin-bottom: 16px;">调整字符</h2>
+    
+    <div class="adjust-char-input-group">
+      <span class="adjust-char-label">要调整的字符 (可输入多个)</span>
+      <input type="text" id="adjustCharInput" class="adjust-char-input" placeholder="例如: 你好A123">
+    </div>
+
+    <div class="adjust-preview">
+      <img id="adjustPreviewImg" src="" alt="预览">
+    </div>
+
+    <div class="adjust-controls">
+      <div class="adjust-control-group">
+        <div class="adjust-control-header">
+          <span class="adjust-control-label">大小</span>
+          <span class="adjust-control-value" id="valAdjustScale">100%</span>
+        </div>
+        <input type="range" id="rngAdjustScale" min="0.1" max="2.0" step="0.05" value="1.0">
+      </div>
+      <div class="adjust-control-group">
+        <div class="adjust-control-header">
+          <span class="adjust-control-label">字距</span>
+          <span class="adjust-control-value" id="valAdjustSpacing">100%</span>
+        </div>
+        <input type="range" id="rngAdjustSpacing" min="0.5" max="2.0" step="0.05" value="1.0">
+      </div>
+      <div class="adjust-control-group">
+        <div class="adjust-control-header">
+          <span class="adjust-control-label">左右偏移</span>
+          <span class="adjust-control-value" id="valAdjustXOffset">0px</span>
+        </div>
+        <input type="range" id="rngAdjustXOffset" min="-100" max="100" step="1" value="0">
+      </div>
+      <div class="adjust-control-group">
+        <div class="adjust-control-header">
+          <span class="adjust-control-label">上下偏移</span>
+          <span class="adjust-control-value" id="valAdjustYOffset">0px</span>
+        </div>
+        <input type="range" id="rngAdjustYOffset" min="-100" max="100" step="1" value="0">
+      </div>
+    </div>
+
+    <div class="adjust-actions">
+      <button class="btn" id="btnAdjustCancel">取消</button>
+      <button class="btn accent" id="btnAdjustApply">应用调整</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileFont" accept=".ttf,.otf,.woff,.woff2" style="display:none">
+<input type="file" id="fileImages" accept=".png" multiple style="display:none">
+<input type="file" id="fileZip" accept=".zip" style="display:none">
+<input type="file" id="fileConfig" accept=".json" style="display:none">
+
+<script type="module">
+const state = {
+  font: null, fontBuffer: null, fontName: '', previewText: '你好世界 Hello 字体修符!',
+  loadedFontFamily: null, 
+  fontSize: 36, fontWeight: 0, letterSpacing: 0, baselineOffset: 0, lineHeight: 1.4,
+  globalColor: '#111827', perCharColors: {}, glyphImages: {}, drawnGlyphs: {}, 
+  pendingAssignments: [], 
+};
+
+const $ = id => document.getElementById(id);
+const dom = {
+  fontName: $('fontName'), previewCanvas: $('previewCanvas'), canvasWrap: $('canvasWrap'),
+  txtPreview: $('txtPreview'), glyphList: $('glyphList'), charColorList: $('charColorList'),
+  pendingSection: $('pendingSection'), pendingList: $('pendingList'),
+  rngSize: $('rngSize'), valSize: $('valSize'), rngWeight: $('rngWeight'), valWeight: $('valWeight'),
+  rngSpacing: $('rngSpacing'), valSpacing: $('valSpacing'), rngBaseline: $('rngBaseline'), valBaseline: $('valBaseline'),
+  rngLineHeight: $('rngLineHeight'), valLineHeight: $('valLineHeight'), 
+  colorGlobal: $('colorGlobal'), addCharColorPanel: $('addCharColorPanel'), newCharInput: $('newCharInput'), newCharColor: $('newCharColor'),
+  
+  btnExport: $('btnExport'), btnLoadConfig: $('btnLoadConfig'), fileConfig: $('fileConfig'),
+  authView: $('authView'), toolView: $('toolView'),
+  inpUser: $('inpUser'), inpPass: $('inpPass'), inpLicense: $('inpLicense'), wrapLicense: $('wrapLicense'),
+  btnSubmitAuth: $('btnSubmitAuth'), btnSwitchMode: $('btnSwitchMode'),
+  authTitle: $('authTitle'), authSub: $('authSub'),
+  txtCurrentUser: $('txtCurrentUser'), btnUserProfile: $('btnUserProfile'), btnAdminPanel: $('btnAdminPanel'), btnLogout: $('btnLogout'),
+
+  drawModal: $('drawModal'), drawCanvas: $('drawCanvas'), drawCtx: null, valDrawSize: $('valDrawSize'),
+  exportModal: $('exportModal'), exportProgressBar: $('exportProgressBar'), exportProgressText: $('exportProgressText'),
+
+  // 调整面板相关 DOM
+  adjustModal: $('adjustModal'), adjustCharInput: $('adjustCharInput'), adjustPreviewImg: $('adjustPreviewImg'),
+  rngAdjustScale: $('rngAdjustScale'), valAdjustScale: $('valAdjustScale'),
+  rngAdjustSpacing: $('rngAdjustSpacing'), valAdjustSpacing: $('valAdjustSpacing'),
+  rngAdjustXOffset: $('rngAdjustXOffset'), valAdjustXOffset: $('valAdjustXOffset'),
+  rngAdjustYOffset: $('rngAdjustYOffset'), valAdjustYOffset: $('valAdjustYOffset'),
+  btnAdjustCancel: $('btnAdjustCancel'), btnAdjustApply: $('btnAdjustApply'),
+  
+  profileModal: $('profileModal'), btnProfileClose: $('btnProfileClose'),
+  profileUsername: $('profileUsername'), profileRole: $('profileRole'), 
+  profileExpire: $('profileExpire'), profileRemain: $('profileRemain'),
+  
+  sheetBackdrop: $('sheetBackdrop'),
+  panelSidebar: $('panelSidebar'),
+  panelRight: $('panelRight')
+};
+dom.drawCtx = dom.drawCanvas.getContext('2d');
+
+window.toast = function(msg, type = 'info') {
+  let container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  let icon = `<svg style="color:#3B82F6;width:20px;height:20px;flex-shrink:0;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+  if (type === 'success') icon = `<svg style="color:#10B981;width:20px;height:20px;flex-shrink:0;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>`;
+  else if (type === 'error') icon = `<svg style="color:#EF4444;width:20px;height:20px;flex-shrink:0;" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>`;
+  el.innerHTML = `${icon}<span style="line-height:1.4;">${msg}</span>`;
+  container.appendChild(el);
+  setTimeout(() => { el.classList.add('leaving'); el.addEventListener('animationend', () => el.remove()); }, 3500);
+}
+
+function downloadBlob(blob, filename) { 
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); 
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); 
+    document.body.removeChild(a); URL.revokeObjectURL(url); 
+}
+
+// ==================== 移动端 抽屉呼出系统 ====================
+function closeAllSheets() {
+    if (document.activeElement) document.activeElement.blur();
+    dom.panelSidebar.classList.remove('show');
+    dom.panelRight.classList.remove('show');
+    dom.sheetBackdrop.classList.remove('show');
+    document.querySelectorAll('.m-tool-btn').forEach(b => b.classList.remove('active'));
+}
+
+document.querySelectorAll('.m-tool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const targetId = btn.dataset.target;
+        const targetPanel = dom[targetId];
+        if (targetPanel.classList.contains('show')) {
+            closeAllSheets();
+        } else {
+            closeAllSheets();
+            targetPanel.classList.add('show');
+            dom.sheetBackdrop.classList.add('show');
+            btn.classList.add('active');
+        }
+    });
+});
+dom.sheetBackdrop.addEventListener('click', closeAllSheets);
+$('closeSidebarBtn')?.addEventListener('click', closeAllSheets);
+$('closeRightBtn')?.addEventListener('click', closeAllSheets);
+
+// ==================== 登录验证 API ====================
+let isRegisterMode = false;
+let loggedInAppUser = __BS_APP_USER_JSON__;
+if (!loggedInAppUser) loggedInAppUser = { username: 'BS用户', role: 'user', expire_time: '' }; 
+
+async function apiCall(action, data = {}) {
+    try {
+        const formData = new URLSearchParams();
+        for (let key in data) formData.append(key, data[key]);
+        const res = await fetch(`https://tool.uxgzs.icu/api.php?action=${action}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: formData, credentials: 'include' });
+        return await res.json();
+    } catch (e) { return { success: false, msg: '网络环境断开，服务端失去响应' }; }
+}
+
+function enterTool() {
+   dom.authView.classList.replace('view-active', 'view-hidden');
+   dom.toolView.classList.replace('view-hidden', 'view-active');
+   
+   if (window.innerWidth > 800) {
+       dom.txtCurrentUser.textContent = `${loggedInAppUser.username}`;
+   }
+   dom.btnUserProfile.style.display = 'inline-flex';
+   dom.btnAdminPanel.style.display = loggedInAppUser.role === 'admin' ? 'block' : 'none';
+   renderPreview(); 
+}
+
+function exitTool() {
+   dom.toolView.classList.replace('view-active', 'view-hidden');
+   dom.authView.classList.replace('view-hidden', 'view-active');
+   dom.inpUser.value = ''; dom.inpPass.value = ''; dom.inpLicense.value = '';
+   dom.btnUserProfile.style.display = 'none';
+}
+
+function setBtnLoading(btn, isLoading, originalText) {
+    if (isLoading) {
+        btn.disabled = true;
+        btn.innerHTML = `<svg class="spinner" viewBox="0 0 24 24"><circle class="path" cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3"></circle></svg> 验证中...`;
+    } else {
+        btn.disabled = false; btn.innerHTML = originalText;
+    }
+}
+
+dom.btnSwitchMode.addEventListener('click', () => {
+    isRegisterMode = !isRegisterMode;
+    if (isRegisterMode) {
+        dom.authTitle.textContent = '注册账号';
+        dom.authSub.textContent = '使用卡密注册新账号';
+        dom.btnSubmitAuth.textContent = '验证卡密并注册';
+        dom.btnSwitchMode.textContent = '已有账号？立即登录 →';
+        dom.wrapLicense.style.display = 'block';
+        setTimeout(() => { dom.wrapLicense.style.opacity = '1'; dom.wrapLicense.style.transform = 'scaleY(1)'; dom.wrapLicense.style.height = '74px'; }, 10);
+    } else {
+        dom.authTitle.textContent = '欢迎回来';
+        dom.authSub.textContent = '登录您的云端创作台';
+        dom.btnSubmitAuth.textContent = '登录';
+        dom.btnSwitchMode.textContent = '没有账号？去注册 →';
+        dom.wrapLicense.style.opacity = '0';
+        dom.wrapLicense.style.transform = 'scaleY(0)';
+        dom.wrapLicense.style.height = '0';
+        setTimeout(() => { dom.wrapLicense.style.display = 'none'; }, 300);
+    }
+});
+
+dom.btnSubmitAuth.addEventListener('click', async () => {
+  const user = dom.inpUser.value.trim();
+  const pass = dom.inpPass.value.trim();
+  const license = dom.inpLicense.value.trim();
+
+  if(!user || !pass) return toast('账号及密码不能为空', 'error');
+  if(isRegisterMode && !license) return toast('请输入注册卡密', 'error');
+
+  setBtnLoading(dom.btnSubmitAuth, true, isRegisterMode ? '验证卡密并注册' : '登录');
+  
+  if (isRegisterMode) {
+      const res = await apiCall('register', { username: user, password: pass, license_key: license });
+      if (res.success) { 
+          toast(`注册成功！请登录。`, 'success'); 
+          dom.btnSwitchMode.click(); 
+      } else { toast(res.msg, 'error'); }
+  } else {
+      const res = await apiCall('login', { username: user, password: pass });
+      if (res.success) {
+          loggedInAppUser = res.user; toast(`登录成功！`, 'success'); setTimeout(enterTool, 500); 
+      } else { toast(res.msg, 'error'); }
+  }
+  setBtnLoading(dom.btnSubmitAuth, false, isRegisterMode ? '验证卡密并注册' : '登录');
+});
+
+dom.btnLogout.addEventListener('click', async () => { if (window.AppBridge) AppBridge.postMessage('logout'); });
+dom.btnAdminPanel.addEventListener('click', () => { toast('管理后台请在服务器后台打开', 'info'); });
+
+// ==================== 用户状态通行证系统 ====================
+dom.btnUserProfile.addEventListener('click', () => {
+  if (!loggedInAppUser) return;
+  dom.profileUsername.textContent = loggedInAppUser.username;
+  
+  if (loggedInAppUser.role === 'admin') {
+      dom.profileRole.textContent = '超级管理员';
+      dom.profileExpire.textContent = '永久有效';
+      dom.profileRemain.textContent = '∞ 永久';
+      dom.profileRemain.style.color = '#10B981'; 
+  } else {
+      dom.profileRole.textContent = '高级创作者';
+      dom.profileExpire.textContent = loggedInAppUser.expire_time || '未知';
+      
+      const expireDate = new Date(loggedInAppUser.expire_time.replace(/-/g, '/'));
+      const now = new Date();
+      const diffTime = expireDate - now;
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays > 0) {
+          dom.profileRemain.textContent = `剩余 ${diffDays} 天`;
+          dom.profileRemain.style.color = '#10B981'; 
+      } else {
+          dom.profileRemain.textContent = `已过期`;
+          dom.profileRemain.style.color = '#EF4444'; 
+      }
+  }
+  dom.profileModal.classList.add('show');
+});
+
+dom.btnProfileClose.addEventListener('click', () => { dom.profileModal.classList.remove('show'); });
+dom.profileModal.addEventListener('click', e => { if (e.target === dom.profileModal) dom.profileModal.classList.remove('show'); });
+
+
+// ==================== 文件系统与配置 ====================
+function checkAuthOnLoad() { enterTool(); }
+checkAuthOnLoad();
+
+function arrayBufferToBase64(buffer) { 
+    let binary = ''; const bytes = new Uint8Array(buffer); 
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]); 
+    return btoa(binary); 
+}
+function base64ToArrayBuffer(b64) { 
+    const binary = atob(b64); const bytes = new Uint8Array(binary.length); 
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); 
+    return bytes.buffer; 
+}
+
+// ★ 终极绝杀：利用原生 CSS + Base64 暴力注入字体，绕过 JS API 对颜色表的屏蔽
+function loadAndRegisterFont(buffer, b64Data = null) {
+    const fontFaceName = 'CustomFont_' + Date.now();
+    const base64 = b64Data || arrayBufferToBase64(buffer);
+    const dataUrl = `data:application/octet-stream;base64,${base64}`;
+    
+    // 生成原生 CSS 样式强制浏览器内核读取全量表数据 (包含 COLR/CPAL/SVG)
+    const style = document.createElement('style');
+    style.innerHTML = `
+      @font-face {
+        font-family: '${fontFaceName}';
+        src: url('${dataUrl}');
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 挂载一个隐藏节点，逼迫浏览器布局引擎必须立刻去解析这个彩色字体
+    const testSpan = document.createElement('span');
+    testSpan.style.fontFamily = `'${fontFaceName}'`;
+    testSpan.style.position = 'absolute';
+    testSpan.style.opacity = '0';
+    testSpan.style.pointerEvents = 'none';
+    testSpan.textContent = '测试';
+    document.body.appendChild(testSpan);
+
+    // 回调渲染
+    document.fonts.load(`10px "${fontFaceName}"`).then(() => {
+        state.loadedFontFamily = fontFaceName;
+        renderPreview();
+        setTimeout(() => testSpan.remove(), 1000);
+    }).catch(err => {
+        console.warn("加载字体警告 (可忽略):", err);
+        state.loadedFontFamily = fontFaceName;
+        setTimeout(() => { renderPreview(); testSpan.remove(); }, 200);
+    });
+}
+
+dom.btnExport.addEventListener('click', () => {
+  const config = { 
+      version: 1, fontName: state.fontName, 
+      settings: { fontSize: state.fontSize, fontWeight: state.fontWeight, letterSpacing: state.letterSpacing, baselineOffset: state.baselineOffset, lineHeight: state.lineHeight, globalColor: state.globalColor }, 
+      perCharColors: state.perCharColors, glyphImages: state.glyphImages, drawnGlyphs: state.drawnGlyphs, previewText: state.previewText 
+  };
+  if (state.fontBuffer) config.fontBufferB64 = arrayBufferToBase64(state.fontBuffer);
+  downloadBlob(new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' }), 'font-config.json'); 
+  toast('配置已成功导出', 'success');
+});
+
+dom.fileConfig.addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  try {
+    const config = JSON.parse(await file.text());
+    if (config.settings) { 
+        Object.assign(state, config.settings); 
+        dom.rngSize.value = state.fontSize; dom.valSize.textContent = state.fontSize + 'px'; 
+        dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight; 
+        dom.rngSpacing.value = state.letterSpacing; dom.valSpacing.textContent = state.letterSpacing + 'px'; 
+        dom.rngBaseline.value = state.baselineOffset; dom.valBaseline.textContent = state.baselineOffset + 'px'; 
+        dom.rngLineHeight.value = state.lineHeight; dom.valLineHeight.textContent = state.lineHeight.toFixed(1); 
+        dom.colorGlobal.value = state.globalColor; 
+    }
+    if (config.perCharColors) state.perCharColors = config.perCharColors; 
+    if (config.glyphImages) state.glyphImages = config.glyphImages; 
+    if (config.drawnGlyphs) state.drawnGlyphs = config.drawnGlyphs;
+    if (config.previewText) { state.previewText = config.previewText; dom.txtPreview.value = config.previewText; }
+    if (config.fontBufferB64) { 
+        state.fontBuffer = base64ToArrayBuffer(config.fontBufferB64); 
+        state.font = opentype.parse(state.fontBuffer); 
+        state.fontName = config.fontName || ''; 
+        loadAndRegisterFont(state.fontBuffer, config.fontBufferB64);
+    }
+    updateGlyphList(); updateCharColorList(); renderPreview(); 
+    toast('配置读取成功', 'success');
+  } catch (err) { toast('读取配置失败: ' + err.message, 'error'); }
+  dom.fileConfig.value = '';
+});
+
+$('btnLoadFont').addEventListener('click', () => $('fileFont').click());
+$('fileFont').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  try {
+    const buffer = await file.arrayBuffer();
+    state.fontBuffer = buffer; state.font = opentype.parse(buffer);
+    state.fontName = file.name; dom.fontName.textContent = file.name;
+    
+    // ★ 使用无损底层注入方案
+    loadAndRegisterFont(buffer);
+
+    toast(`已导入字体: ${file.name}`, 'success'); renderPreview();
+  } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
+});
+
+$('btnLoadImages').addEventListener('click', () => $('fileImages').click());
+$('fileImages').addEventListener('change', async e => {
+  const files = [...e.target.files]; if (!files.length) return;
+  await processImageFiles(files); $('fileImages').value = '';
+});
+
+$('btnLoadZip').addEventListener('click', () => $('fileZip').click());
+$('fileZip').addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  try {
+    const zip = await JSZip.loadAsync(file); const imageFiles = [];
+    for (const [name, entry] of Object.entries(zip.files)) {
+      if (entry.dir) continue;
+      const ext = name.split('.').pop().toLowerCase();
+      if (ext === 'png') {
+        const data = await entry.async('blob');
+        imageFiles.push(new File([data], name.split('/').pop(), { type: 'image/png' }));
+      }
+    }
+    if (imageFiles.length) { await processImageFiles(imageFiles); toast(`成功导入 ${imageFiles.length} 张图片`, 'success'); } 
+    else { toast('ZIP 包内没有找到 PNG 图片', 'error'); }
+  } catch (err) { toast('ZIP 解析失败: ' + err.message, 'error'); }
+  $('fileZip').value = '';
+});
+
+dom.canvasWrap.addEventListener('dragover', e => { e.preventDefault(); });
+dom.canvasWrap.addEventListener('drop', async e => {
+  e.preventDefault(); 
+  const files = [...e.dataTransfer.files];
+  const pngFiles = files.filter(f => f.name.match(/\.png$/i));
+  const fontFiles = files.filter(f => f.name.match(/\.(ttf|otf|woff2?)$/i));
+  const zipFiles = files.filter(f => f.name.match(/\.zip$/i));
+
+  if (fontFiles.length) { 
+      try {
+          const buffer = await fontFiles[0].arrayBuffer(); 
+          state.fontBuffer = buffer;
+          state.font = opentype.parse(state.fontBuffer); 
+          state.fontName = fontFiles[0].name; 
+          dom.fontName.textContent = fontFiles[0].name;
+          
+          // ★ 使用无损底层注入方案
+          loadAndRegisterFont(buffer);
+
+          toast(`已导入字体: ${fontFiles[0].name}`, 'success'); 
+      } catch (err) { toast(`字体解析失败: ${err.message}`, 'error'); }
+  }
+  if (pngFiles.length) { 
+      await processImageFiles(pngFiles); toast(`成功导入 ${pngFiles.length} 张图片`, 'success'); 
+  }
+  if (zipFiles.length) {
+    try {
+        const zip = await JSZip.loadAsync(zipFiles[0]); const imageFiles = [];
+        for (const [name, entry] of Object.entries(zip.files)) {
+          if (entry.dir) continue;
+          if (name.split('.').pop().toLowerCase() === 'png') { 
+              const data = await entry.async('blob');
+              imageFiles.push(new File([data], name.split('/').pop(), { type: 'image/png' })); 
+          }
+        }
+        await processImageFiles(imageFiles); toast(`成功导入 ${imageFiles.length} 张图片`, 'success');
+    } catch (err) { toast(`ZIP 解析失败: ${err.message}`, 'error'); }
+  }
+  renderPreview();
+});
+
+async function processImageFiles(files) {
+  for (const file of files) {
+    const dataUrl = await blobToDataUrl(file); const img = await loadImage(dataUrl);
+    const baseName = file.name.replace(/\.png$/i, ''); const char = detectCharFromFilename(baseName);
+    if (char) { 
+        // 初始化时设置默认调整参数
+        state.glyphImages[char] = { 
+            dataUrl, width: img.width, height: img.height, source: 'image',
+            scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0
+        }; 
+        imageCache[dataUrl] = img; 
+    } 
+    else { state.pendingAssignments.push({ dataUrl, fileName: file.name, width: img.width, height: img.height }); }
+  }
+  updateGlyphList(); updatePendingAssignments(); renderPreview();
+  if (state.pendingAssignments.length) toast(`有 ${state.pendingAssignments.length} 张图片需要您输入字符进行绑定`);
+}
+
+function detectCharFromFilename(name) {
+  if (!name || name.length === 0) return null;
+  const chars = [...name];
+  if (chars.length === 1 && chars[0] !== '\0' && chars[0] !== '\ufffd') return chars[0];
+  const hexMatch = name.match(/^U\+([0-9A-Fa-f]{4,6})$/);
+  if (hexMatch) return String.fromCodePoint(parseInt(hexMatch[1], 16));
+  return null;
+}
+
+function blobToDataUrl(blob) { return new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(blob); }); }
+function loadImage(src) { return new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = src; }); }
+
+function updatePendingAssignments() {
+  if (state.pendingAssignments.length === 0) { dom.pendingSection.style.display = 'none'; return; }
+  dom.pendingSection.style.display = 'block';
+  dom.pendingList.innerHTML = state.pendingAssignments.map((p, i) => `
+    <div class="pending-item">
+      <img src="${p.dataUrl}">
+      <span class="pending-name" title="${p.fileName}">${p.fileName}</span>
+      <span style="font-size:11px;color:var(--text-muted);flex-shrink:0;">→</span>
+      <input type="text" class="pending-char-input" data-idx="${i}" maxlength="2" placeholder="字">
+    </div>`).join('');
+}
+
+$('btnApplyPending').addEventListener('click', () => {
+  const inputs = dom.pendingList.querySelectorAll('.pending-char-input'); const remaining = [];
+  inputs.forEach(inp => {
+    const idx = parseInt(inp.dataset.idx); const char = inp.value.trim();
+    if (char && [...char].length >= 1) {
+      const ch = [...char][0]; const p = state.pendingAssignments[idx];
+      // 初始化时设置默认调整参数
+      state.glyphImages[ch] = { 
+          dataUrl: p.dataUrl, width: p.width, height: p.height, source: 'image',
+          scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0
+      };
+      const preImg = new Image(); preImg.onload = () => { imageCache[p.dataUrl] = preImg; }; preImg.src = p.dataUrl;
+    } else { remaining.push(state.pendingAssignments[idx]); }
+  });
+  state.pendingAssignments = remaining; updateGlyphList(); updatePendingAssignments(); renderPreview();
+  toast(`已绑定 ${inputs.length - remaining.length} 个字符图片`, 'success');
+  if (window.innerWidth <= 1023) closeAllSheets();
+});
+
+// ==================== 调整面板逻辑 ====================
+let currentAdjustingChar = null;
+
+function openAdjustModal(char) {
+    currentAdjustingChar = char;
+    const info = state.glyphImages[char] || state.drawnGlyphs[char];
+    if (!info) return;
+
+    dom.adjustCharInput.value = char;
+    dom.adjustPreviewImg.src = info.dataUrl;
+    
+    // 设置滑块值
+    dom.rngAdjustScale.value = info.scale || 1.0;
+    dom.valAdjustScale.textContent = Math.round((info.scale || 1.0) * 100) + '%';
+    
+    dom.rngAdjustSpacing.value = info.spacing || 1.0;
+    dom.valAdjustSpacing.textContent = Math.round((info.spacing || 1.0) * 100) + '%';
+    
+    dom.rngAdjustXOffset.value = info.xOffset || 0;
+    dom.valAdjustXOffset.textContent = (info.xOffset || 0) + 'px';
+    
+    dom.rngAdjustYOffset.value = info.yOffset || 0;
+    dom.valAdjustYOffset.textContent = (info.yOffset || 0) + 'px';
+
+    dom.adjustModal.classList.add('show');
+}
+
+function closeAdjustModal() {
+    dom.adjustModal.classList.remove('show');
+    currentAdjustingChar = null;
+}
+
+// 滑块事件绑定
+dom.rngAdjustScale.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    dom.valAdjustScale.textContent = Math.round(val * 100) + '%';
+    updatePreviewWithAdjustments();
+});
+dom.rngAdjustSpacing.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    dom.valAdjustSpacing.textContent = Math.round(val * 100) + '%';
+    updatePreviewWithAdjustments();
+});
+dom.rngAdjustXOffset.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    dom.valAdjustXOffset.textContent = val + 'px';
+    updatePreviewWithAdjustments();
+});
+dom.rngAdjustYOffset.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    dom.valAdjustYOffset.textContent = val + 'px';
+    updatePreviewWithAdjustments();
+});
+
+// 实时预览滑块调整
+function updatePreviewWithAdjustments() {
+    if (!currentAdjustingChar) return;
+    const info = state.glyphImages[currentAdjustingChar] || state.drawnGlyphs[currentAdjustingChar];
+    if (!info) return;
+
+    // 临时应用调整到当前字符进行预览
+    info.scale = parseFloat(dom.rngAdjustScale.value);
+    info.spacing = parseFloat(dom.rngAdjustSpacing.value);
+    info.xOffset = parseInt(dom.rngAdjustXOffset.value);
+    info.yOffset = parseInt(dom.rngAdjustYOffset.value);
+    
+    renderPreview();
+}
+
+dom.btnAdjustCancel.addEventListener('click', closeAdjustModal);
+dom.btnAdjustApply.addEventListener('click', () => {
+    const charsStr = dom.adjustCharInput.value.trim();
+    if (!charsStr) return toast('请输入要应用调整的字符', 'error');
+
+    const scale = parseFloat(dom.rngAdjustScale.value);
+    const spacing = parseFloat(dom.rngAdjustSpacing.value);
+    const xOffset = parseInt(dom.rngAdjustXOffset.value);
+    const yOffset = parseInt(dom.rngAdjustYOffset.value);
+
+    let appliedCount = 0;
+    for (const char of charsStr) {
+        let info = state.glyphImages[char] || state.drawnGlyphs[char];
+        if (info) {
+            info.scale = scale;
+            info.spacing = spacing;
+            info.xOffset = xOffset;
+            info.yOffset = yOffset;
+            appliedCount++;
+        }
+    }
+
+    if (appliedCount > 0) {
+        toast(`已将调整应用到 ${appliedCount} 个字符`, 'success');
+        renderPreview();
+        closeAdjustModal();
+    } else {
+        toast('未找到匹配的字符进行调整', 'warning');
+    }
+});
+
+dom.adjustModal.addEventListener('click', e => { if (e.target === dom.adjustModal) closeAdjustModal(); });
+
+
+function updateGlyphList() {
+  const allGlyphs = {};
+  for (const [ch, info] of Object.entries(state.drawnGlyphs)) allGlyphs[ch] = { ...info, source: 'draw' };
+  for (const [ch, info] of Object.entries(state.glyphImages)) allGlyphs[ch] = { ...info, source: info.source || 'image' };
+  const entries = Object.entries(allGlyphs);
+  if (entries.length === 0) { dom.glyphList.innerHTML = `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px 10px;">目前没有导入图片。</div>`; return; }
+  dom.glyphList.innerHTML = entries.map(([ch, info]) => `
+    <div class="glyph-item">
+      <img src="${info.dataUrl}">
+      <div class="glyph-info">
+        <div class="glyph-label">${ch} <span style="color:var(--text-muted);font-weight:normal;font-size:11px;">(U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4,'0')})</span></div>
+        <div class="glyph-type">${info.source === 'draw' ? '手绘文字' : '导入的图片'}</div>
+      </div>
+      <button class="adjust-glyph btn small" data-char="${escapeHtml(ch)}" style="margin-right: 8px;">调整</button>
+      <button class="remove-glyph btn danger small" data-char="${escapeHtml(ch)}" style="background:transparent;border:none;box-shadow:none;">删除</button>
+    </div>`).join('');
+    
+  dom.glyphList.querySelectorAll('.adjust-glyph').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openAdjustModal(btn.dataset.char);
+    });
+  });
+  
+  dom.glyphList.querySelectorAll('.remove-glyph').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ch = btn.dataset.char; delete state.glyphImages[ch]; delete state.drawnGlyphs[ch];
+      updateGlyphList(); renderPreview();
+    });
+  });
+}
+
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function updateCharColorList() {
+  const entries = Object.entries(state.perCharColors);
+  if(entries.length === 0) { dom.charColorList.innerHTML = ''; return; }
+  dom.charColorList.innerHTML = entries.map(([ch, color]) => `
+    <div class="char-color-item">
+      <span class="char-label" style="font-family:var(--font);">${ch}</span>
+      <input type="color" value="${color}" data-char="${escapeHtml(ch)}" class="char-color-input">
+      <button class="remove-btn char-color-remove" data-char="${escapeHtml(ch)}">
+         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>`).join('');
+
+  dom.charColorList.querySelectorAll('.char-color-input').forEach(inp => { 
+    inp.addEventListener('input', () => { state.perCharColors[inp.dataset.char] = inp.value; renderPreview(); }); 
+    inp.addEventListener('change', () => { state.perCharColors[inp.dataset.char] = inp.value; renderPreview(); }); 
+  });
+  dom.charColorList.querySelectorAll('.char-color-remove').forEach(btn => { btn.addEventListener('click', () => { delete state.perCharColors[btn.dataset.char]; updateCharColorList(); renderPreview(); }); });
+}
+
+$('btnToggleAddColor').addEventListener('click', () => {
+  dom.addCharColorPanel.style.display = dom.addCharColorPanel.style.display === 'none' ? 'flex' : 'none';
+  if(dom.addCharColorPanel.style.display === 'flex') dom.newCharInput.focus();
+});
+
+// ★ 功能修复：循环遍历您输入的所有字符，并为每个字符批量绑定相同的颜色。
+$('btnConfirmAddChar').addEventListener('click', () => {
+  const charsStr = dom.newCharInput.value.trim(); 
+  if (!charsStr) return toast('请输入至少一个字符', 'error');
+  
+  const color = dom.newCharColor.value;
+  for (const ch of [...charsStr]) {
+      state.perCharColors[ch] = color;
+  }
+  
+  updateCharColorList(); renderPreview();
+  dom.newCharInput.value = ''; dom.addCharColorPanel.style.display = 'none';
+  if (window.innerWidth <= 1023) closeAllSheets();
+});
+
+// Slider & Color bindings 
+function bindSlider(id, valId, key, format) {
+  $(id).addEventListener('input', () => {
+    const v = parseFloat($(id).value); state[key] = v; $(valId).textContent = format(v); renderPreview();
+  });
+}
+bindSlider('rngSize', 'valSize', 'fontSize', v => v + 'px'); 
+bindSlider('rngWeight', 'valWeight', 'fontWeight', v => v);
+bindSlider('rngSpacing', 'valSpacing', 'letterSpacing', v => v + 'px'); 
+bindSlider('rngBaseline', 'valBaseline', 'baselineOffset', v => v + 'px');
+bindSlider('rngLineHeight', 'valLineHeight', 'lineHeight', v => v.toFixed(1));
+
+dom.colorGlobal.addEventListener('input', (e) => { state.globalColor = e.target.value; renderPreview(); });
+dom.colorGlobal.addEventListener('change', (e) => { state.globalColor = e.target.value; renderPreview(); });
+$('txtPreview').addEventListener('input', () => { state.previewText = $('txtPreview').value; renderPreview(); });
+
+// ==================== ★ Canvas 清晰度引擎与渲染 ★ ====================
+function getSafeAdvanceWidth(font, ch, fontSize) {
+  try { 
+      const width = font.getAdvanceWidth(ch, fontSize);
+      return (typeof width === 'number' && !isNaN(width)) ? width : fontSize * 0.6; 
+  } catch (e) { return fontSize * 0.6; } 
+}
+
+const imageCache = {}; 
+
+function renderPreview() {
+  const canvas = dom.previewCanvas; const ctx = canvas.getContext('2d');
+  const text = state.previewText || '预览文字';
+  
+  const ratio = window.devicePixelRatio || 1;
+  
+  if (!state.font && Object.keys(state.glyphImages).length === 0 && Object.keys(state.drawnGlyphs).length === 0) {
+    canvas.width = 400 * ratio; canvas.height = 100 * ratio; 
+    canvas.style.width = '400px'; canvas.style.height = '100px';
+    ctx.scale(ratio, ratio);
+    ctx.fillStyle = '#4B5563'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('尚未加载字体，请点击顶部按钮导入', 200, 50); return;
+  }
+  
+  const { fontSize, letterSpacing, baselineOffset, lineHeight } = state;
+  const chars = [...text]; const lines = []; let currentLine = [];
+  for (const ch of chars) {
+    if (ch === '\n') { lines.push(currentLine); lines.push('BREAK'); currentLine = []; continue; }
+    // 获取字形信息，考虑字距调整
+    const glyphInfo = state.drawnGlyphs[ch] || state.glyphImages[ch];
+    let chWidth;
+    if (glyphInfo) {
+        // 如果是图片/手绘，宽度受字距调整比例影响
+        chWidth = fontSize * (glyphInfo.spacing || 1.0);
+    } else {
+        // 如果是原字体，直接获取宽度
+        chWidth = state.font ? getSafeAdvanceWidth(state.font, ch, fontSize) : fontSize * 0.6;
+    }
+    currentLine.push({ ch, w: chWidth });
+  }
+  if (currentLine.length) lines.push(currentLine);
+
+  const lineGroups = []; let group = [];
+  for (const l of lines) { if (l === 'BREAK') { lineGroups.push(group); group = []; } else group = l; }
+  if (group.length) lineGroups.push(group);
+
+  const lineWidths = lineGroups.map(line => { let w = 0; for(const item of line) w += item.w + letterSpacing; return w > 0 ? w - letterSpacing : 0; });
+  const exactMaxWidth = Math.max(...lineWidths, 300);
+  const totalLines = lineGroups.length || 1; const lineHeightPx = fontSize * lineHeight;
+  const padding = 40; const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
+  
+  const canvasWidth = exactMaxWidth + padding * 2; 
+  const canvasHeight = Math.max(sectionHeight * 2 + padding, 200);
+
+  canvas.width = canvasWidth * ratio; 
+  canvas.height = canvasHeight * ratio; 
+  canvas.style.width = canvasWidth + 'px';
+  canvas.style.height = canvasHeight + 'px';
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#9CA3AF'; ctx.textAlign = 'center'; 
+  ctx.fillText('✨ 字体排版效果', canvasWidth / 2, padding - 15);
+
+  let y = padding + fontSize;
+  for (let i = 0; i < lineGroups.length; i++) {
+    const line = lineGroups[i]; let x = (canvasWidth - lineWidths[i]) / 2;
+    for (const item of line) {
+      const ch = item.ch; 
+      const color = state.perCharColors[ch] || state.globalColor || '#111827';
+      const drawnInfo = state.drawnGlyphs[ch]; const imageInfo = state.glyphImages[ch];
+      
+      if (drawnInfo) { 
+          drawGlyphImageFromInfo(ctx, drawnInfo, x, y - fontSize, fontSize); 
+          x += fontSize * (drawnInfo.spacing || 1.0) + letterSpacing;
+      } else if (imageInfo) { 
+          drawGlyphImageFromInfo(ctx, imageInfo, x, y - fontSize, fontSize); 
+          x += fontSize * (imageInfo.spacing || 1.0) + letterSpacing;
+      } else if (state.font) { 
+          drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset); 
+          x += getSafeAdvanceWidth(state.font, ch, fontSize) + letterSpacing; 
+      } else { 
+          ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; ctx.fillText(ch, x, y); 
+          x += ctx.measureText(ch).width + letterSpacing; 
+      }
+    }
+    y += lineHeightPx;
+  }
+
+  const originalStartY = padding + sectionHeight;
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#9CA3AF'; ctx.textAlign = 'center'; 
+  ctx.fillText('📄 原字体对照', canvasWidth / 2, originalStartY - 15);
+  ctx.beginPath(); ctx.moveTo(padding, originalStartY - 35); ctx.lineTo(canvasWidth - padding, originalStartY - 35); ctx.strokeStyle = '#E5E7EB'; ctx.stroke();
+
+  if (!state.font) { 
+      ctx.fillStyle = '#9CA3AF'; ctx.font = '14px sans-serif'; 
+      ctx.fillText('尚未加载原字体', canvasWidth / 2, originalStartY + 30); 
+      return; 
+  }
+  
+  let origY = originalStartY + fontSize;
+  for (let i = 0; i < lineGroups.length; i++) {
+    const line = lineGroups[i]; let x = (canvasWidth - lineWidths[i]) / 2;
+    for (const item of line) {
+      const ch = item.ch; 
+      // 对照区：只传颜色，由原生的 Canvas 决定是否覆盖颜色
+      drawFontGlyph(ctx, ch, x, origY, fontSize, '#6B7280', 0, true);
+      x += getSafeAdvanceWidth(state.font, ch, fontSize) + letterSpacing;
+    }
+    origY += lineHeightPx;
+  }
+}
+
+function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOriginal = false) {
+  const adjustedY = y - baselineOffset; 
+  
+  if (state.loadedFontFamily) {
+      ctx.fillStyle = color;
+      ctx.font = `${fontSize}px "${state.loadedFontFamily}", sans-serif`;
+      ctx.fillText(ch, x, adjustedY);
+      
+      if (!isOriginal && state.fontWeight > 0) {
+          ctx.strokeStyle = color; 
+          ctx.lineWidth = state.fontWeight; 
+          ctx.lineJoin = 'round'; 
+          ctx.strokeText(ch, x, adjustedY);
+      }
+  } else {
+      try {
+        const path = state.font.getPath(ch, x, adjustedY, fontSize); 
+        path.fill = color; 
+        if (!isOriginal && state.fontWeight > 0) { 
+            path.stroke = color; path.strokeWidth = state.fontWeight;
+        }
+        path.draw(ctx);
+      } catch (e) { 
+        ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; ctx.fillText(ch, x, adjustedY); 
+        if (!isOriginal && state.fontWeight > 0) {
+            ctx.strokeStyle = color; ctx.lineWidth = state.fontWeight; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
+        }
+      }
+  }
+}
+
+function drawGlyphImageFromInfo(ctx, info, x, y, cellSize) {
+  const dataUrl = info.dataUrl;
+  // 获取调整参数，设置默认值
+  const scale = info.scale || 1.0;
+  const xOffset = info.xOffset || 0;
+  const yOffset = info.yOffset || 0;
+
+  if (imageCache[dataUrl]) {
+    const img = imageCache[dataUrl]; 
+    if (!img.complete || img.width === 0 || img.height === 0) return;
+    
+    // 计算适应 cellSize 的基础缩放比例
+    const baseScale = Math.min(cellSize / img.width, cellSize / img.height);
+    
+    // 应用用户调整的缩放比例
+    const finalScale = baseScale * scale;
+    
+    const w = img.width * finalScale;
+    const h = img.height * finalScale;
+    
+    // 计算居中位置，并应用偏移
+    const drawX = x + (cellSize - w) / 2 + xOffset;
+    const drawY = y + (cellSize - h) / 2 + yOffset;
+    
+    ctx.drawImage(img, drawX, drawY, w, h); 
+    return;
+  }
+  const img = new Image(); img.src = dataUrl; imageCache[dataUrl] = img; img.onload = () => { renderPreview(); };
+}
+
+// ==================== 画板系统 ====================
+function initDrawCanvas() {
+    const dCanvas = dom.drawCanvas;
+    const dCtx = dom.drawCtx;
+    const ratio = window.devicePixelRatio || 1;
+    dCanvas.width = 400 * ratio;
+    dCanvas.height = 400 * ratio;
+    dCanvas.style.width = '400px';
+    dCanvas.style.height = '400px';
+    dCtx.scale(ratio, ratio);
+    dCtx.fillStyle = '#ffffff';
+    dCtx.fillRect(0, 0, 400, 400);
+}
+
+$('btnOpenDraw').addEventListener('click', () => { dom.drawModal.classList.add('show'); initDrawCanvas(); });
+$('btnDrawClose').addEventListener('click', () => { dom.drawModal.classList.remove('show'); });
+dom.drawModal.addEventListener('click', e => { if (e.target === dom.drawModal) dom.drawModal.classList.remove('show'); });
+$('drawSize').addEventListener('input', () => { dom.valDrawSize.textContent = $('drawSize').value + 'px'; });
+let drawIsEraser = false;
+$('btnEraser').addEventListener('click', () => { drawIsEraser = !drawIsEraser; $('btnEraser').style.background = drawIsEraser ? 'var(--danger)' : ''; $('btnEraser').style.color = drawIsEraser ? '#fff' : 'var(--text-main)'; });
+$('btnDrawClear').addEventListener('click', () => { initDrawCanvas(); });
+const getDrawPos = (e) => { const rect = dom.drawCanvas.getBoundingClientRect(); return { x: (e.clientX - rect.left) * (400 / rect.width), y: (e.clientY - rect.top) * (400 / rect.height) }; };
+const attachDrawEvents = (start, move, end) => {
+  dom.drawCanvas.addEventListener(start, e => { if(e.touches)e.preventDefault(); state.isDrawing = true; const pos = getDrawPos(e.touches?e.touches[0]:e); dom.drawCtx.beginPath(); dom.drawCtx.moveTo(pos.x, pos.y); dom.drawCtx.lineCap='round'; dom.drawCtx.lineJoin='round'; dom.drawCtx.lineWidth=$('drawSize').value; dom.drawCtx.strokeStyle=drawIsEraser?'#ffffff':$('drawColor').value; });
+  dom.drawCanvas.addEventListener(move, e => { if(e.touches)e.preventDefault(); if(!state.isDrawing)return; const pos = getDrawPos(e.touches?e.touches[0]:e); dom.drawCtx.lineTo(pos.x, pos.y); dom.drawCtx.stroke(); dom.drawCtx.beginPath(); dom.drawCtx.moveTo(pos.x, pos.y); });
+  dom.drawCanvas.addEventListener(end, () => state.isDrawing = false);
+};
+attachDrawEvents('mousedown','mousemove','mouseup'); attachDrawEvents('touchstart','touchmove','touchend'); dom.drawCanvas.addEventListener('mouseleave', () => state.isDrawing = false);
+$('btnDrawApply').addEventListener('click', () => {
+  const ch = $('drawChar').value.trim(); if (!ch) return toast('请输入要绑定的字符', 'error');
+  const offCanvas = document.createElement('canvas'); offCanvas.width = 400; offCanvas.height = 400;
+  offCanvas.getContext('2d').drawImage(dom.drawCanvas, 0, 0, dom.drawCanvas.width, dom.drawCanvas.height, 0, 0, 400, 400);
+  const dUrl = offCanvas.toDataURL('image/png'); 
+  // 初始化时设置默认调整参数
+  state.drawnGlyphs[[...ch][0]] = { 
+      dataUrl: dUrl, 
+      scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0 
+  };
+  const dImg = new Image(); dImg.onload = () => imageCache[dUrl] = dImg; dImg.src = dUrl;
+  updateGlyphList(); renderPreview(); toast('手绘文字保存成功', 'success'); dom.drawModal.classList.remove('show');
+});
+
+// ==================== 二进制极速导出系统 ====================
+const yieldThread = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+function checksum32(buf) { const v = new DataView(buf.buffer?buf.buffer:buf, buf.byteOffset||0, buf.byteLength||buf.length); let sum=0; const len=v.byteLength; const end=len-(len%4); for(let i=0;i<end;i+=4) sum=(sum+v.getUint32(i,false))>>>0; if(len%4!==0){ let rem=0; for(let i=end;i<len;i++) rem=(rem<<8)|v.getUint8(i); sum=(sum+(rem<<((4-(len%4))*8)))>>>0; } return sum; }
+
+function fastPatchGlyf(fontBuffer, glyphDataMap) {
+  const v = new DataView(fontBuffer); if (fontBuffer.byteLength < 12) return null;
+  const numTables = Math.min(v.getUint16(4, false), Math.floor((fontBuffer.byteLength - 12) / 16));
+  let headOff=0, maxpOff=0, locaOff=0, glyfOff=0, glyfLen=0;
+  for (let i = 0; i < numTables; i++) {
+    const ro = 12 + i * 16;
+    const tag = String.fromCharCode(...new Uint8Array(fontBuffer, ro, 4));
+    const off = v.getUint32(ro + 8, false); const len = v.getUint32(ro + 12, false);
+    if(tag==='head')headOff=off; if(tag==='maxp')maxpOff=off; if(tag==='loca')locaOff=off; if(tag==='glyf'){glyfOff=off;glyfLen=len;}
+  }
+  if (!glyfOff||!locaOff||!headOff||!maxpOff) return null;
+
+  if (maxpOff + 6 > fontBuffer.byteLength) return null;
+  const numGlyphs = v.getUint16(maxpOff + 4, false);
+  if (headOff + 52 > fontBuffer.byteLength) return null;
+  const indexToLocFormat = v.getInt16(headOff + 50, false);
+
+  const oldOffsets = new Uint32Array(numGlyphs + 1);
+  const isLong = indexToLocFormat === 1;
+  const maxLoca = numGlyphs + 1;
+
+  for (let i = 0; i < maxLoca; i++) {
+    let readPos = locaOff + (isLong ? i * 4 : i * 2);
+    if (readPos + (isLong ? 4 : 2) > fontBuffer.byteLength) {
+        oldOffsets[i] = i > 0 ? oldOffsets[i - 1] : 0;
+    } else {
+        oldOffsets[i] = isLong ? v.getUint32(readPos, false) : v.getUint16(readPos, false) * 2;
+    }
+  }
+
+  const newGlyfChunks = [];
+  const newOffsets = new Uint32Array(numGlyphs + 1);
+  let currentOffset = 0;
+
+  for (let i = 0; i < numGlyphs; i++) {
+    newOffsets[i] = currentOffset;
+    let chunk;
+    if (glyphDataMap[i]) {
+      chunk = glyphDataMap[i]; 
+    } else {
+      let start = oldOffsets[i];
+      let end = oldOffsets[i + 1];
+      if (start > glyfLen) start = glyfLen;
+      if (end > glyfLen) end = glyfLen;
+      if (start > end) start = end;
+
+      let actualStart = Math.min(glyfOff + start, fontBuffer.byteLength);
+      let actualEnd = Math.min(glyfOff + end, fontBuffer.byteLength);
+      actualStart = Math.max(0, actualStart);
+      actualEnd = Math.max(actualStart, actualEnd);
+
+      chunk = new Uint8Array(fontBuffer, actualStart, actualEnd - actualStart);
+    }
+    newGlyfChunks.push(chunk);
+    currentOffset += chunk.length;
+    if (currentOffset % 2 !== 0) {
+      newGlyfChunks.push(new Uint8Array([0]));
+      currentOffset++;
+    }
+  }
+  newOffsets[numGlyphs] = currentOffset;
+
+  const needsLong = currentOffset > 0x1FFFF;
+  const newFormat = needsLong ? 1 : 0;
+
+  const newLocaBuf = new Uint8Array((numGlyphs + 1) * (needsLong ? 4 : 2));
+  const newLocaV = new DataView(newLocaBuf.buffer);
+  for (let i = 0; i <= numGlyphs; i++) {
+    if (needsLong) newLocaV.setUint32(i * 4, newOffsets[i], false);
+    else newLocaV.setUint16(i * 2, newOffsets[i] / 2, false);
+  }
+
+  const newGlyfBuf = new Uint8Array(currentOffset);
+  let pos = 0;
+  for (const chunk of newGlyfChunks) {
+    newGlyfBuf.set(chunk, pos);
+    pos += chunk.length;
+  }
+
+  const actualHeadLen = Math.min(54, fontBuffer.byteLength - headOff);
+  let newHeadBuf = new Uint8Array(54);
+  newHeadBuf.set(new Uint8Array(fontBuffer, headOff, actualHeadLen));
+  
+  if (newFormat !== indexToLocFormat) {
+    new DataView(newHeadBuf.buffer).setInt16(50, newFormat, false);
+  }
+
+  return { glyf: newGlyfBuf, loca: newLocaBuf, head: newHeadBuf };
+}
+
+function injectTablesSorted(fb, newT) {
+  const v=new DataView(fb), b=new Uint8Array(fb);
+  if (fb.byteLength < 12) return fb;
+  const nt=Math.min(v.getUint16(4,false), Math.floor((fb.byteLength - 12) / 16)), tabs=[];
+  for (let i=0; i<nt; i++) {
+    const ro = 12 + i * 16;
+    const t=String.fromCharCode(b[ro],b[ro+1],b[ro+2],b[ro+3]);
+    if(newT[t])continue;
+    const off=Math.min(v.getUint32(ro+8,false),fb.byteLength), len=Math.min(v.getUint32(ro+12,false),fb.byteLength-off);
+    tabs.push({tag:t, checkSum:v.getUint32(ro+4,false), data:fb.slice(off,off+len), originalLength:len});
+  }
+  for (const [t, d] of Object.entries(newT)) tabs.push({tag:t, checkSum:checksum32(d), data:d, originalLength:d.byteLength||d.length});
+  tabs.sort((a,b)=>{for(let i=0;i<4;i++){const c=a.tag.charCodeAt(i)-b.tag.charCodeAt(i);if(c!==0)return c;}return 0;});
+  const tLen = tabs.length, hs=12+tLen*16; let ds=0; for(const t of tabs)ds+=((t.data.byteLength||t.data.length)+3)&~3;
+  const out=new ArrayBuffer(hs+ds), ov=new DataView(out), ob=new Uint8Array(out);
+  ov.setUint32(0,v.getUint32(0,false)); ov.setUint16(4,tLen,false);
+  let sr=1, es=0; while(sr*2<=tLen){sr*=2;es++;} sr*=16; ov.setUint16(6,sr,false); ov.setUint16(8,es,false); ov.setUint16(10,tLen*16-sr,false);
+  let co=hs;
+  for(let i=0;i<tLen;i++){
+    const t=tabs[i], ro=12+i*16; ob[ro]=t.tag.charCodeAt(0); ob[ro+1]=t.tag.charCodeAt(1); ob[ro+2]=t.tag.charCodeAt(2); ob[ro+3]=t.tag.charCodeAt(3);
+    ov.setUint32(ro+4,t.checkSum,false); ov.setUint32(ro+8,co,false); ov.setUint32(ro+12,t.originalLength,false);
+    ob.set(new Uint8Array(t.data),co); co+=((t.data.byteLength||t.data.length)+3)&~3;
+  }
+  for(let i=0;i<tLen;i++){
+    if(tabs[i].tag==='head'){
+      const ho=ov.getUint32(12+i*16+8,false), hl=ov.getUint32(12+i*16+12,false);
+      if(ho+hl<=out.byteLength){
+        ov.setUint32(ho+8,0,false); ov.setUint32(12+i*16+4,checksum32(new Uint8Array(out,ho,hl)),false);
+        ov.setUint32(ho+8,(0xB1B0AFBA-checksum32(out))>>>0,false);
+      }
+      break;
+    }
+  }
+  return out;
+}
+
+function buildSbixBinary(nG, glyphInfoMap) {
+  let mh=128; 
+  for(const i in glyphInfoMap){
+      const info=glyphInfoMap[i];
+      const d = info.data;
+      if(d.length>24&&new DataView(d.buffer).getUint32(12,false)===0x49484452){
+          const h=new DataView(d.buffer).getUint32(20,false);
+          if(h>mh)mh=h;
+      }
+  }
+  const offs=new Uint32Array(nG+1), chs=[]; let cDo=4+(nG+1)*4;
+  for(let i=0;i<nG;i++){
+    offs[i]=cDo;
+    if(glyphInfoMap[i]){
+      const info=glyphInfoMap[i];
+      const d=info.data; 
+      // 考虑 Y 轴偏移
+      const yOffset = info.yOffset || 0;
+      const c=new Uint8Array(8+d.length), dv=new DataView(c.buffer);
+      let h=mh; if(d.length>24&&new DataView(d.buffer).getUint32(12,false)===0x49484452) h=new DataView(d.buffer).getUint32(20,false);
+      // 设置 X 和 Y 偏移量，注意 sbix 的 Y 轴方向
+      dv.setInt16(0, info.xOffset || 0, false); 
+      dv.setInt16(2, -Math.round(h*0.1) + yOffset, false); 
+      c[4]=112;c[5]=110;c[6]=103;c[7]=32; c.set(d,8);
+      chs.push(c); cDo+=c.length;
+    }
+  }
+  offs[nG]=cDo; const sb=new Uint8Array(cDo), sDv=new DataView(sb.buffer);
+  sDv.setUint16(0,mh,false); sDv.setUint16(2,72,false); for(let i=0;i<=nG;i++) sDv.setUint32(4+i*4,offs[i],false);
+  let p=4+(nG+1)*4; for(const c of chs){ sb.set(c,p); p+=c.length; }
+  const out=new Uint8Array(12+sb.length), oDv=new DataView(out.buffer);
+  oDv.setUint16(0,1,false); oDv.setUint16(2,1,false); oDv.setUint32(4,1,false); oDv.setUint32(8,12,false); out.set(sb,12); return out;
+}
+
+function patchHmtx(fb, glyphInfoMap, upem) {
+  const v=new DataView(fb); if (fb.byteLength < 12) return null;
+  const nt=Math.min(v.getUint16(4,false), Math.floor((fb.byteLength - 12) / 16)); let hmO=0, hmL=0, hhO=0;
+  for(let i=0;i<nt;i++){
+      const ro = 12 + i * 16;
+      const t=String.fromCharCode(...new Uint8Array(fb,ro,4));
+      if(t==='hmtx'){hmO=v.getUint32(ro+8,false);hmL=v.getUint32(ro+12,false);}
+      if(t==='hhea')hhO=v.getUint32(ro+8,false);
+  }
+  if(!hmO||!hhO)return null;
+  const nLHM=v.getUint16(hhO+34,false), nHm=new Uint8Array(fb,hmO,hmL).slice(), nHmV=new DataView(nHm.buffer);
+  for(const i in glyphInfoMap){
+    const info=glyphInfoMap[i];
+    const d=info.data; 
+    // 获取字距调整比例
+    const spacing = info.spacing || 1.0;
+    let w=100,h=100;
+    if(d.length>24&&new DataView(d.buffer).getUint32(12,false)===0x49484452){w=new DataView(d.buffer).getUint32(16,false);h=new DataView(d.buffer).getUint32(20,false);}
+    if(parseInt(i)<nLHM){
+        // 应用字距调整
+        nHmV.setUint16(parseInt(i)*4, Math.round(upem * (w / (h || 1)) * spacing), false);
+        nHmV.setInt16(parseInt(i)*4+2,0,false);
+    }
+  }
+  return nHm;
+}
+
+function buildCpalBinary(pc){const b=new ArrayBuffer(14+pc.length*4),v=new DataView(b);v.setUint16(0,0,false);v.setUint16(2,pc.length,false);v.setUint16(4,1,false);v.setUint16(6,pc.length,false);v.setUint32(8,14,false);v.setUint16(12,0,false);for(let i=0;i<pc.length;i++){v.setUint8(14+i*4,pc[i].b);v.setUint8(15+i*4,pc[i].g);v.setUint8(16+i*4,pc[i].r);v.setUint8(17+i*4,pc[i].a);}return b;}
+function buildColrBinary(br,lr){const b=new ArrayBuffer(14+br.length*6+lr.length*4),v=new DataView(b);v.setUint16(0,0,false);v.setUint16(2,br.length,false);v.setUint32(4,14,false);v.setUint32(8,14+br.length*6,false);v.setUint16(12,lr.length,false);for(let i=0;i<br.length;i++){v.setUint16(14+i*6,br[i].glyphID,false);v.setUint16(16+i*6,br[i].firstLayerIndex,false);v.setUint16(18+i*6,br[i].numLayers,false);}for(let i=0;i<lr.length;i++){v.setUint16(14+br.length*6+i*4,lr[i].glyphID,false);v.setUint16(16+br.length*6+i*4,lr[i].paletteIndex,false);}return b;}
+function base64ToUint8Array(b64){const bS=atob(b64),b=new Uint8Array(bS.length);for(let i=0;i<bS.length;i++)b[i]=bS.charCodeAt(i);return b;}
+
+function getActualGlyphIndex(font, char) {
+  return font.charToGlyphIndex(char);
+}
+
+// 辅助函数：缩放图片并返回新的 base64
+function scaleImage(dataUrl, scale) {
+    return new Promise((resolve) => {
+        if (scale === 1.0) {
+            resolve(dataUrl);
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const newWidth = img.width * scale;
+            const newHeight = img.height * scale;
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+            ctx.drawImage(img, 0, 0, newWidth, newHeight);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.src = dataUrl;
+    });
+}
+
+$('btnExportFont').addEventListener('click', async () => {
+  if (!state.font) return toast('执行中断：未检测到导入的字体', 'error');
+  const rep=new Set([...Object.keys(state.glyphImages),...Object.keys(state.drawnGlyphs)]), col=Object.entries(state.perCharColors);
+  const expGlo=state.globalColor.toUpperCase()!=='#111827'&&state.globalColor.toUpperCase()!=='#000000';
+  if(rep.size===0&&col.length===0&&!expGlo){ downloadBlob(new Blob([state.fontBuffer.slice(0)],{type:'font/ttf'}),(state.fontName||'font')+'.ttf'); toast('由于您未进行修改，已导出原字体', 'success'); return; }
+
+  $('btnExportFont').disabled=true; dom.exportModal.classList.add('show'); dom.exportProgressBar.style.width='0%';
+  dom.exportProgressText.textContent='正在准备导出引擎...'; await yieldThread();
+
+  let c=0, dn=0; const gDm={}, gPm={};
+  let maxp=0; const v=new DataView(state.fontBuffer); for(let i=0;i<v.getUint16(4,false);i++){const ro=12+i*16;if(String.fromCharCode(...new Uint8Array(state.fontBuffer,ro,4))==='maxp'){maxp=v.getUint32(ro+8,false);break;}}
+  const nG=v.getUint16(maxp+4,false);
+
+  for (const ch of rep) {
+    const gi=getActualGlyphIndex(state.font, ch); if(!gi) {dn++;continue;}
+    const info = state.glyphImages[ch] || state.drawnGlyphs[ch];
+    if(!info || !info.dataUrl){dn++;continue;}
+    
+    dom.exportProgressText.textContent=`正在处理特征图层 '${ch}' (${dn+1}/${rep.size})`; await yieldThread();
+    try{
+        // 处理缩放：如果 scale 不是 1.0，则生成新的缩放后的图片数据
+        let dataUrl = info.dataUrl;
+        if (info.scale && info.scale !== 1.0) {
+            dataUrl = await scaleImage(dataUrl, info.scale);
+        }
+        
+        // 存储包含数据和调整参数的对象
+        gPm[gi] = {
+            data: base64ToUint8Array(dataUrl.split(',')[1]),
+            spacing: info.spacing,
+            xOffset: info.xOffset,
+            yOffset: info.yOffset
+        };
+        gDm[gi]=new Uint8Array(0);
+        c++;
+    }catch(e){console.error(e);}
+    dn++; dom.exportProgressBar.style.width=`${(dn/rep.size)*100}%`;
+  }
+
+  dom.exportProgressText.textContent='正在对齐色彩参数...'; await yieldThread();
+  const inj={}; 
+  if(Object.keys(gPm).length>0){
+      // 传递包含调整参数的映射给构建函数
+      inj['sbix']=buildSbixBinary(nG,gPm);
+      const nh=patchHmtx(state.fontBuffer,gPm,state.font.unitsPerEm||1000);
+      if(nh)inj['hmtx']=nh;
+  }
+  if(col.length>0||expGlo){
+    const pc=[], ht={}, gp=(hx)=>{const u=hx.toUpperCase();if(ht[u]!==undefined)return ht[u];pc.push({r:parseInt(u.slice(1,3),16),g:parseInt(u.slice(3,5),16),b:parseInt(u.slice(5,7),16),a:255});ht[u]=pc.length-1;return pc.length-1;};
+    const gcm=new Map(); if(expGlo){for(let i=1;i<nG;i++)gcm.set(i,state.globalColor);}
+    for(const[ch,hx]of col){const gi=getActualGlyphIndex(state.font, ch);if(gi>0)gcm.set(gi,hx);}
+    if(gcm.size>0){
+      const br=[], lr=[]; Array.from(gcm.keys()).sort((a,b)=>a-b).forEach(gi=>{br.push({glyphID:gi,firstLayerIndex:lr.length,numLayers:1});lr.push({glyphID:gi,paletteIndex:gp(gcm.get(gi))});});
+      inj['COLR']=buildColrBinary(br,lr); inj['CPAL']=buildCpalBinary(pc); c+=gcm.size;
+    }
+  }
+
+  dom.exportProgressText.innerHTML='进行系统安全容器封装...<br><span style="color:#10B981;font-weight:600;">保留物理级清晰度</span>'; await yieldThread();
+  try {
+    let ob=state.fontBuffer.slice(0);
+    if(Object.keys(gDm).length>0){const pt=fastPatchGlyf(ob,gDm);if(pt){inj['glyf']=pt.glyf;inj['loca']=pt.loca;inj['head']=pt.head;}else{toast('提示: 检测到不兼容底包，部分特性可能丢失','info');}}
+    if(Object.keys(inj).length>0) ob=injectTablesSorted(ob,inj);
+    downloadBlob(new Blob([ob],{type:'font/ttf'}),(state.fontName||'font').replace(/\.(ttf|otf|woff2?)$/i,'')+'-MOD.ttf');
+    toast(`导出成功！共修改了 ${c} 处字符。`, 'success');
+  } catch(e) { toast(`底层编译失败: ${e.message}`, 'error'); }
+  dom.exportModal.classList.remove('show'); $('btnExportFont').disabled=false;
+});
+</script>
+</body>
+</html>
