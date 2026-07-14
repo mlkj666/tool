@@ -472,6 +472,9 @@ class _ToolPanelState extends State<ToolPanel> {
         ),
       );
     _loadTool();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowAnnouncement();
+    });
   }
 
   Future<void> _loadTool() async {
@@ -481,6 +484,52 @@ class _ToolPanelState extends State<ToolPanel> {
       jsonEncode(widget.user.toJson()),
     );
     await _controller.loadHtmlString(html);
+  }
+
+  Future<void> _maybeShowAnnouncement() async {
+    try {
+      final uri = Uri.parse(
+        'https://tool.uxgzs.icu/api.php',
+      ).replace(queryParameters: {'action': 'get_announcement'});
+      final response = await http.post(
+        uri,
+        headers: {
+          if (widget.cookie != null && widget.cookie!.isNotEmpty)
+            'Cookie': widget.cookie!,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      );
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (data is! Map<String, dynamic> || data['success'] != true) return;
+      final raw = data['announcement'] is Map<String, dynamic>
+          ? data['announcement'] as Map<String, dynamic>
+          : data;
+      final content = (raw['content'] ?? raw['message'] ?? '')
+          .toString()
+          .trim();
+      if (content.isEmpty) return;
+      final title = (raw['title'] ?? '公告').toString();
+      final id = (raw['id'] ?? raw['updated_at'] ?? content.hashCode)
+          .toString();
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString('dismissed_announcement_id') == id) return;
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _AnnouncementDialog(
+          title: title,
+          content: content,
+          onClose: () async {
+            await prefs.setString('dismissed_announcement_id', id);
+            if (context.mounted) Navigator.of(context).pop();
+          },
+        ),
+      );
+    } catch (_) {
+      // Announcement is optional; keep the workspace smooth if the backend has
+      // not added the endpoint yet.
+    }
   }
 
   @override
@@ -511,6 +560,90 @@ class _ToolPanelState extends State<ToolPanel> {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnnouncementDialog extends StatelessWidget {
+  const _AnnouncementDialog({
+    required this.title,
+    required this.content,
+    required this.onClose,
+  });
+
+  final String title;
+  final String content;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.campaign_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              content,
+              style: const TextStyle(
+                color: Color(0xFF3F3F46),
+                fontSize: 15,
+                height: 1.55,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 48,
+              child: FilledButton(
+                onPressed: onClose,
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                child: const Text(
+                  '知道了',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

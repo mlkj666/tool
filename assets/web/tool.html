@@ -37,7 +37,7 @@
 /* 视口锁死机制 */
 html, body {
   width: 100%; height: 100%; position: fixed; top: 0; left: 0; 
-  overflow: hidden; touch-action: none; 
+  overflow: hidden; touch-action: manipulation; 
   font-family: var(--font); background: var(--bg-app); color: var(--text-main);
 }
 
@@ -146,7 +146,7 @@ header h1 { font-size: 17px; font-weight: 800; color: var(--text-main); margin-r
 }
 
 main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
-.sidebar, .right-panel { background: var(--bg-panel); overflow-y: auto; padding: 24px 24px; display: flex; flex-direction: column; gap: 28px; }
+.sidebar, .right-panel { background: var(--bg-panel); overflow-y: auto; padding: 24px 24px; display: flex; flex-direction: column; gap: 28px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
 
 @media (min-width: 1024px) { 
   .sidebar { width: 320px; border-right: 1px solid var(--border); flex-shrink: 0; } 
@@ -168,7 +168,7 @@ main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
 /* 滑块防误触优化 */
 input[type=range] { 
   -webkit-appearance: none; width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; outline: none; margin: 6px 0 16px; 
-  touch-action: none; 
+  touch-action: pan-x; 
 }
 input[type=range]::-webkit-slider-thumb { 
   -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; 
@@ -198,7 +198,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 .preview-toolbar { padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--bg-panel); display: flex; z-index: 10; flex-shrink: 0;}
 .preview-toolbar input[type="text"] { flex: 1; background: var(--bg-control); border: 1px solid transparent; border-radius: 10px; padding: 12px 20px; outline: none; font-size: 16px; transition: all 0.2s; }
 .preview-toolbar input[type="text"]:focus { background: #fff; border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
-.preview-canvas-wrap { flex: 1; overflow: auto; padding: 32px; text-align: center; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; -webkit-overflow-scrolling: touch; }
+.preview-canvas-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 32px; text-align: center; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
 
 .glyph-list { display: flex; flex-direction: column; gap: 12px; }
 .glyph-item { display: flex; align-items: center; gap: 14px; padding: 12px; background: #fff; border-radius: var(--radius-sm); border: 1px solid var(--border); transition: 0.2s; }
@@ -369,7 +369,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 
     <section class="preview-area" id="previewArea">
       <div class="preview-toolbar">
-        <input type="text" id="txtPreview" placeholder="在此输入预览测试文本..." value="你好世界 Hello 字体修符!">
+        <input type="text" id="txtPreview" placeholder="在此输入预览测试文本..." value="爆闪 STUDIO 字体 修符工具">
       </div>
       <div class="preview-canvas-wrap" id="canvasWrap">
         <canvas class="preview-canvas" id="previewCanvas"></canvas>
@@ -397,7 +397,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
         <div class="val-row"><label>字号</label><span class="val" id="valSize">36px</span></div>
         <input type="range" id="rngSize" min="8" max="200" value="36" step="1">
         <div class="val-row"><label>粗细</label><span class="val" id="valWeight">0</span></div>
-        <input type="range" id="rngWeight" min="0" max="20" value="0" step="0.5">
+        <input type="range" id="rngWeight" min="-20" max="20" value="0" step="0.5">
         <div class="val-row"><label>字间距</label><span class="val" id="valSpacing">0px</span></div>
         <input type="range" id="rngSpacing" min="-20" max="60" value="0" step="1">
         <div class="val-row"><label>基线偏移</label><span class="val" id="valBaseline">0px</span></div>
@@ -598,7 +598,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 
 <script type="module">
 const state = {
-  font: null, fontBuffer: null, fontName: '', previewText: '你好世界 Hello 字体修符!',
+  font: null, fontBuffer: null, fontName: '', previewText: '爆闪 STUDIO 字体 修符工具',
   loadedFontFamily: null, 
   fontSize: 36, fontWeight: 0, letterSpacing: 0, baselineOffset: 0, lineHeight: 1.4,
   globalColor: '#111827', perCharColors: {}, glyphImages: {}, drawnGlyphs: {}, 
@@ -828,6 +828,27 @@ function base64ToArrayBuffer(b64) {
     return bytes.buffer; 
 }
 
+function resetTypographySettings() {
+  Object.assign(state, {
+    previewText: '爆闪 STUDIO 字体 修符工具',
+    fontSize: 36,
+    fontWeight: 0,
+    letterSpacing: 0,
+    baselineOffset: 0,
+    lineHeight: 1.4,
+    globalColor: '#111827',
+    perCharColors: {},
+  });
+  dom.txtPreview.value = state.previewText;
+  dom.rngSize.value = state.fontSize; dom.valSize.textContent = state.fontSize + 'px';
+  dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight;
+  dom.rngSpacing.value = state.letterSpacing; dom.valSpacing.textContent = state.letterSpacing + 'px';
+  dom.rngBaseline.value = state.baselineOffset; dom.valBaseline.textContent = state.baselineOffset + 'px';
+  dom.rngLineHeight.value = state.lineHeight; dom.valLineHeight.textContent = state.lineHeight + 'x';
+  dom.colorGlobal.value = state.globalColor;
+  updateCharColorList();
+}
+
 // ★ 终极绝杀：利用原生 CSS + Base64 暴力注入字体，绕过 JS API 对颜色表的屏蔽
 function loadAndRegisterFont(buffer, b64Data = null) {
     const fontFaceName = 'CustomFont_' + Date.now();
@@ -912,6 +933,7 @@ $('fileFont').addEventListener('change', async e => {
     const buffer = await file.arrayBuffer();
     state.fontBuffer = buffer; state.font = opentype.parse(buffer);
     state.fontName = file.name; dom.fontName.textContent = file.name;
+    resetTypographySettings();
     
     // ★ 使用无损底层注入方案
     loadAndRegisterFont(buffer);
@@ -960,6 +982,7 @@ dom.canvasWrap.addEventListener('drop', async e => {
           state.font = opentype.parse(state.fontBuffer); 
           state.fontName = fontFiles[0].name; 
           dom.fontName.textContent = fontFiles[0].name;
+          resetTypographySettings();
           
           // ★ 使用无损底层注入方案
           loadAndRegisterFont(buffer);
@@ -1263,9 +1286,15 @@ function renderPreview() {
   }
   
   const { fontSize, letterSpacing, baselineOffset, lineHeight } = state;
-  const chars = [...text]; const lines = []; let currentLine = [];
+  const padding = 40;
+  const wrapWidth = Math.max(260, (dom.canvasWrap.clientWidth || window.innerWidth || 360) - padding * 2 - 28);
+  const chars = [...text]; const lineGroups = []; let currentLine = []; let currentWidth = 0;
   for (const ch of chars) {
-    if (ch === '\n') { lines.push(currentLine); lines.push('BREAK'); currentLine = []; continue; }
+    if (ch === '\n') {
+      if (currentLine.length) lineGroups.push(currentLine);
+      currentLine = []; currentWidth = 0;
+      continue;
+    }
     // 获取字形信息，考虑字距调整
     const glyphInfo = state.drawnGlyphs[ch] || state.glyphImages[ch];
     let chWidth;
@@ -1276,20 +1305,24 @@ function renderPreview() {
         // 如果是原字体，直接获取宽度
         chWidth = state.font ? getSafeAdvanceWidth(state.font, ch, fontSize) : fontSize * 0.6;
     }
+    const nextWidth = currentLine.length ? currentWidth + letterSpacing + chWidth : chWidth;
+    if (currentLine.length && nextWidth > wrapWidth) {
+      lineGroups.push(currentLine);
+      currentLine = [];
+      currentWidth = 0;
+    }
     currentLine.push({ ch, w: chWidth });
+    currentWidth = currentLine.length === 1 ? chWidth : currentWidth + letterSpacing + chWidth;
   }
-  if (currentLine.length) lines.push(currentLine);
+  if (currentLine.length) lineGroups.push(currentLine);
 
-  const lineGroups = []; let group = [];
-  for (const l of lines) { if (l === 'BREAK') { lineGroups.push(group); group = []; } else group = l; }
-  if (group.length) lineGroups.push(group);
-
+  if (!lineGroups.length) lineGroups.push([]);
   const lineWidths = lineGroups.map(line => { let w = 0; for(const item of line) w += item.w + letterSpacing; return w > 0 ? w - letterSpacing : 0; });
-  const exactMaxWidth = Math.max(...lineWidths, 300);
+  const exactMaxWidth = Math.min(Math.max(...lineWidths, 300), wrapWidth);
   const totalLines = lineGroups.length || 1; const lineHeightPx = fontSize * lineHeight;
-  const padding = 40; const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
+  const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
   
-  const canvasWidth = exactMaxWidth + padding * 2; 
+  const canvasWidth = Math.max(300, Math.min(exactMaxWidth + padding * 2, (dom.canvasWrap.clientWidth || exactMaxWidth + padding * 2) - 8)); 
   const canvasHeight = Math.max(sectionHeight * 2 + padding, 200);
 
   canvas.width = canvasWidth * ratio; 
@@ -1364,6 +1397,14 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
           ctx.lineWidth = state.fontWeight; 
           ctx.lineJoin = 'round'; 
           ctx.strokeText(ch, x, adjustedY);
+      } else if (!isOriginal && state.fontWeight < 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.strokeStyle = '#000';
+          ctx.lineWidth = Math.abs(state.fontWeight);
+          ctx.lineJoin = 'round';
+          ctx.strokeText(ch, x, adjustedY);
+          ctx.restore();
       }
   } else {
       try {
@@ -1373,10 +1414,27 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
             path.stroke = color; path.strokeWidth = state.fontWeight;
         }
         path.draw(ctx);
+        if (!isOriginal && state.fontWeight < 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            path.fill = null;
+            path.stroke = '#000';
+            path.strokeWidth = Math.abs(state.fontWeight);
+            path.draw(ctx);
+            ctx.restore();
+        }
       } catch (e) { 
         ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; ctx.fillText(ch, x, adjustedY); 
         if (!isOriginal && state.fontWeight > 0) {
             ctx.strokeStyle = color; ctx.lineWidth = state.fontWeight; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
+        } else if (!isOriginal && state.fontWeight < 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = Math.abs(state.fontWeight);
+            ctx.lineJoin = 'round';
+            ctx.strokeText(ch, x, adjustedY);
+            ctx.restore();
         }
       }
   }
