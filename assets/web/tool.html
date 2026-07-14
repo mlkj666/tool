@@ -591,8 +591,23 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
   </div>
 </div>
 
+<div class="modal-overlay" id="imageSourceModal">
+  <div class="modal" style="max-width: 360px;">
+    <h3 style="font-size:18px;font-weight:800;margin-bottom:8px;">导入图片</h3>
+    <p style="font-size:13px;color:var(--text-sec);line-height:1.5;margin-bottom:18px;">请选择图片来源，建议使用透明 PNG 字符图片。</p>
+    <div style="display:grid;gap:10px;">
+      <button class="btn accent" id="btnImagePhoto" style="height:44px;">从相册选择</button>
+      <button class="btn" id="btnImageCamera" style="height:44px;">拍照导入</button>
+      <button class="btn" id="btnImageFiles" style="height:44px;">从文件选择</button>
+      <button class="btn" id="btnImageCancel" style="height:40px;">取消</button>
+    </div>
+  </div>
+</div>
+
 <input type="file" id="fileFont" accept=".ttf,.otf,.woff,.woff2" style="display:none">
-<input type="file" id="fileImages" accept=".png" multiple style="display:none">
+<input type="file" id="fileImages" accept="image/png,.png" multiple style="display:none">
+<input type="file" id="fileImagesPhoto" accept="image/png,image/*" multiple style="display:none">
+<input type="file" id="fileImagesCamera" accept="image/*" capture="environment" style="display:none">
 <input type="file" id="fileZip" accept=".zip" style="display:none">
 <input type="file" id="fileConfig" accept=".json" style="display:none">
 
@@ -655,7 +670,27 @@ window.toast = function(msg, type = 'info') {
   setTimeout(() => { el.classList.add('leaving'); el.addEventListener('animationend', () => el.remove()); }, 3500);
 }
 
-function downloadBlob(blob, filename) { 
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function downloadBlob(blob, filename) { 
+    const isFontFile = /\.(ttf|otf|woff2?)$/i.test(filename);
+    if (isFontFile && window.FileSaver) {
+        try {
+            toast('正在打开 iOS 文件保存面板...', 'info');
+            const base64 = await blobToBase64(blob);
+            window.FileSaver.postMessage(JSON.stringify({ filename, base64 }));
+            return;
+        } catch (e) {
+            toast('原生保存面板打开失败，正在尝试浏览器下载', 'error');
+        }
+    }
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); 
     a.href = url; a.download = filename; document.body.appendChild(a); a.click(); 
     document.body.removeChild(a); URL.revokeObjectURL(url); 
@@ -942,11 +977,20 @@ $('fileFont').addEventListener('change', async e => {
   } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
 });
 
-$('btnLoadImages').addEventListener('click', () => $('fileImages').click());
-$('fileImages').addEventListener('change', async e => {
-  const files = [...e.target.files]; if (!files.length) return;
-  await processImageFiles(files); $('fileImages').value = '';
-});
+$('btnLoadImages').addEventListener('click', () => $('imageSourceModal').classList.add('show'));
+$('btnImageCancel').addEventListener('click', () => $('imageSourceModal').classList.remove('show'));
+$('imageSourceModal').addEventListener('click', e => { if (e.target === $('imageSourceModal')) $('imageSourceModal').classList.remove('show'); });
+$('btnImagePhoto').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImagesPhoto').click(); });
+$('btnImageCamera').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImagesCamera').click(); });
+$('btnImageFiles').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); $('fileImages').click(); });
+
+async function handleImageInput(input) {
+  const files = [...input.files]; if (!files.length) return;
+  await processImageFiles(files); input.value = '';
+}
+$('fileImages').addEventListener('change', async e => handleImageInput(e.target));
+$('fileImagesPhoto').addEventListener('change', async e => handleImageInput(e.target));
+$('fileImagesCamera').addEventListener('change', async e => handleImageInput(e.target));
 
 $('btnLoadZip').addEventListener('click', () => $('fileZip').click());
 $('fileZip').addEventListener('change', async e => {

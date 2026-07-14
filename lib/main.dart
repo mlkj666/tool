@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -460,6 +463,12 @@ class _ToolPanelState extends State<ToolPanel> {
           if (message.message == 'logout') widget.onLogout();
         },
       )
+      ..addJavaScriptChannel(
+        'FileSaver',
+        onMessageReceived: (message) {
+          _saveExportedFile(message.message);
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) => setState(() => _progress = progress),
@@ -484,6 +493,55 @@ class _ToolPanelState extends State<ToolPanel> {
       jsonEncode(widget.user.toJson()),
     );
     await _controller.loadHtmlString(html);
+  }
+
+  Future<void> _saveExportedFile(String payload) async {
+    try {
+      final data = jsonDecode(payload);
+      if (data is! Map<String, dynamic>) return;
+      final filename = _safeFilename(
+        (data['filename'] ?? 'BS-Font.ttf').toString(),
+      );
+      final base64 = (data['base64'] ?? '').toString();
+      if (base64.isEmpty) return;
+
+      final bytes = base64Decode(base64);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}$filename');
+      await file.writeAsBytes(bytes, flush: true);
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'font/ttf', name: filename)],
+          subject: filename,
+          text: '保存导出的字体文件',
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFFEF4444),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          content: const Text(
+            '文件保存面板打开失败，请重新导出一次',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+      );
+    }
+  }
+
+  String _safeFilename(String value) {
+    final cleaned = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.isEmpty) return 'BS-Font.ttf';
+    return cleaned.length > 120 ? cleaned.substring(0, 120) : cleaned;
   }
 
   Future<void> _maybeShowAnnouncement() async {
