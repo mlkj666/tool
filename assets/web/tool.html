@@ -415,8 +415,8 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
         <div class="section-title">字体排版</div>
         <div class="val-row"><label>字号</label><span class="val" id="valSize">36px</span></div>
         <input type="range" id="rngSize" min="8" max="200" value="36" step="1">
-        <div class="val-row"><label>粗细</label><span class="val" id="valWeight">0</span></div>
-        <input type="range" id="rngWeight" min="-20" max="20" value="0" step="0.5">
+        <div class="val-row"><label>笔画粗细</label><span class="val" id="valWeight">0%</span></div>
+        <input type="range" id="rngWeight" min="-80" max="80" value="0" step="1">
         <div class="val-row"><label>字间距</label><span class="val" id="valSpacing">0px</span></div>
         <input type="range" id="rngSpacing" min="-20" max="60" value="0" step="1">
         <div class="val-row"><label>基线偏移</label><span class="val" id="valBaseline">0px</span></div>
@@ -757,6 +757,7 @@ async function apiCall(action, data = {}) {
 }
 
 function enterTool() {
+   window.__bsToolReady = true;
    dom.authView.classList.replace('view-active', 'view-hidden');
    dom.toolView.classList.replace('view-hidden', 'view-active');
    
@@ -895,7 +896,7 @@ function resetTypographySettings() {
   });
   dom.txtPreview.value = state.previewText;
   dom.rngSize.value = state.fontSize; dom.valSize.textContent = state.fontSize + 'px';
-  dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight;
+  dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight + '%';
   dom.rngSpacing.value = state.letterSpacing; dom.valSpacing.textContent = state.letterSpacing + 'px';
   dom.rngBaseline.value = state.baselineOffset; dom.valBaseline.textContent = state.baselineOffset + 'px';
   dom.rngLineHeight.value = state.lineHeight; dom.valLineHeight.textContent = state.lineHeight + 'x';
@@ -958,7 +959,7 @@ dom.fileConfig.addEventListener('change', async e => {
     if (config.settings) { 
         Object.assign(state, config.settings); 
         dom.rngSize.value = state.fontSize; dom.valSize.textContent = state.fontSize + 'px'; 
-        dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight; 
+        dom.rngWeight.value = state.fontWeight; dom.valWeight.textContent = state.fontWeight + '%';
         dom.rngSpacing.value = state.letterSpacing; dom.valSpacing.textContent = state.letterSpacing + 'px'; 
         dom.rngBaseline.value = state.baselineOffset; dom.valBaseline.textContent = state.baselineOffset + 'px'; 
         dom.rngLineHeight.value = state.lineHeight; dom.valLineHeight.textContent = state.lineHeight.toFixed(1); 
@@ -1004,9 +1005,7 @@ function openNativeImagePicker(source = 'photo') {
   return false;
 }
 
-$('btnLoadImages').addEventListener('click', () => {
-  if (!openNativeImagePicker('photo')) $('imageSourceModal').classList.add('show');
-});
+$('btnLoadImages').addEventListener('click', () => $('imageSourceModal').classList.add('show'));
 $('btnImageCancel').addEventListener('click', () => $('imageSourceModal').classList.remove('show'));
 $('imageSourceModal').addEventListener('click', e => { if (e.target === $('imageSourceModal')) $('imageSourceModal').classList.remove('show'); });
 $('btnImagePhoto').addEventListener('click', () => { $('imageSourceModal').classList.remove('show'); if (!openNativeImagePicker('photo')) $('fileImagesPhoto').click(); });
@@ -1190,6 +1189,7 @@ function openAdjustModal(char) {
     
     dom.rngAdjustYOffset.value = info.yOffset || 0;
     dom.valAdjustYOffset.textContent = (info.yOffset || 0) + 'px';
+    updateAdjustPreviewImage();
 
     dom.adjustModal.classList.add('show');
 }
@@ -1244,7 +1244,16 @@ function updatePreviewWithAdjustments() {
     info.xOffset = parseInt(dom.rngAdjustXOffset.value);
     info.yOffset = parseInt(dom.rngAdjustYOffset.value);
     
+    updateAdjustPreviewImage();
     schedulePreviewRender();
+}
+
+function updateAdjustPreviewImage() {
+    const scale = parseFloat(dom.rngAdjustScale.value || '1');
+    const xOffset = parseInt(dom.rngAdjustXOffset.value || '0');
+    const yOffset = parseInt(dom.rngAdjustYOffset.value || '0');
+    dom.adjustPreviewImg.style.transform = `translate(${xOffset}px, ${yOffset}px) scale(${scale})`;
+    dom.adjustPreviewImg.style.transition = 'transform 40ms linear';
 }
 
 dom.btnAdjustCancel.addEventListener('click', closeAdjustModal);
@@ -1379,7 +1388,7 @@ function bindSlider(id, valId, key, format) {
   $(id).addEventListener('change', () => schedulePreviewRender(true));
 }
 bindSlider('rngSize', 'valSize', 'fontSize', v => v + 'px'); 
-bindSlider('rngWeight', 'valWeight', 'fontWeight', v => v);
+bindSlider('rngWeight', 'valWeight', 'fontWeight', v => v + '%');
 bindSlider('rngSpacing', 'valSpacing', 'letterSpacing', v => v + 'px'); 
 bindSlider('rngBaseline', 'valBaseline', 'baselineOffset', v => v + 'px');
 bindSlider('rngLineHeight', 'valLineHeight', 'lineHeight', v => v.toFixed(1));
@@ -1513,7 +1522,9 @@ function renderPreview() {
 
 function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOriginal = false) {
   const adjustedY = y - baselineOffset; 
-  const negativeWeight = !isOriginal ? Math.min(Math.abs(Math.min(0, state.fontWeight)), 20) : 0;
+  const weightPercent = !isOriginal ? state.fontWeight : 0;
+  const negativeWeight = Math.min(Math.abs(Math.min(0, weightPercent)), 80);
+  const positiveStroke = Math.max(0, weightPercent) / 100 * fontSize * 0.18;
   
   if (state.loadedFontFamily) {
       ctx.fillStyle = color;
@@ -1521,10 +1532,9 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
       if (negativeWeight > 0) {
           const metrics = ctx.measureText(ch);
           const w = Math.max(metrics.width, fontSize * 0.5);
-          const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
-          const sy = Math.max(0.88, 1 - negativeWeight * 0.005);
+          const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
+          const sy = Math.max(0.78, 1 - negativeWeight * 0.0025);
           ctx.save();
-          ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
           ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
           ctx.scale(sx, sy);
           ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
@@ -1534,9 +1544,9 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
           ctx.fillText(ch, x, adjustedY);
       }
       
-      if (!isOriginal && state.fontWeight > 0) {
+      if (!isOriginal && positiveStroke > 0) {
           ctx.strokeStyle = color; 
-          ctx.lineWidth = state.fontWeight; 
+          ctx.lineWidth = positiveStroke;
           ctx.lineJoin = 'round'; 
           ctx.strokeText(ch, x, adjustedY);
       }
@@ -1544,15 +1554,14 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
       try {
         const path = state.font.getPath(ch, x, adjustedY, fontSize); 
         path.fill = color; 
-        if (!isOriginal && state.fontWeight > 0) { 
-            path.stroke = color; path.strokeWidth = state.fontWeight;
+        if (!isOriginal && positiveStroke > 0) {
+            path.stroke = color; path.strokeWidth = positiveStroke;
         }
         if (negativeWeight > 0) {
             const w = getSafeAdvanceWidth(state.font, ch, fontSize);
-            const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
-            const sy = Math.max(0.88, 1 - negativeWeight * 0.005);
+            const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
+            const sy = Math.max(0.78, 1 - negativeWeight * 0.0025);
             ctx.save();
-            ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
             ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
             ctx.scale(sx, sy);
             ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
@@ -1565,9 +1574,8 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
         ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; 
         if (negativeWeight > 0) {
             const w = Math.max(ctx.measureText(ch).width, fontSize * 0.5);
-            const sx = Math.max(0.72, 1 - negativeWeight * 0.018);
+            const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
             ctx.save();
-            ctx.globalAlpha = Math.max(0.68, 1 - negativeWeight * 0.012);
             ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
             ctx.scale(sx, 1);
             ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
@@ -1576,8 +1584,8 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
         } else {
             ctx.fillText(ch, x, adjustedY); 
         }
-        if (!isOriginal && state.fontWeight > 0) {
-            ctx.strokeStyle = color; ctx.lineWidth = state.fontWeight; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
+        if (!isOriginal && positiveStroke > 0) {
+            ctx.strokeStyle = color; ctx.lineWidth = positiveStroke; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
         }
       }
   }
@@ -1989,14 +1997,47 @@ function transformSimpleGlyph(chunk, scale, riseUnits, weightUnits) {
     y += dy; ys.push(y);
   }
 
-  const cx = (src.getInt16(2, false) + src.getInt16(6, false)) / 2;
+  const glyphMinX = src.getInt16(2, false);
+  const glyphMinY = src.getInt16(4, false);
+  const glyphMaxX = src.getInt16(6, false);
+  const glyphMaxY = src.getInt16(8, false);
+  const xMid = (glyphMinX + glyphMaxX) / 2;
+  const yMid = (glyphMinY + glyphMaxY) / 2;
+  const contourBoxes = [];
+  let contourStart = 0;
+  for (let c = 0; c < contours; c++) {
+    const contourEnd = endPts[c];
+    let minCx = 32767, minCy = 32767, maxCx = -32768, maxCy = -32768;
+    for (let i = contourStart; i <= contourEnd; i++) {
+      minCx = Math.min(minCx, xs[i]); maxCx = Math.max(maxCx, xs[i]);
+      minCy = Math.min(minCy, ys[i]); maxCy = Math.max(maxCy, ys[i]);
+    }
+    const width = Math.max(1, maxCx - minCx);
+    const height = Math.max(1, maxCy - minCy);
+    contourBoxes.push({
+      start: contourStart,
+      end: contourEnd,
+      cx: (minCx + maxCx) / 2,
+      cy: (minCy + maxCy) / 2,
+      limit: Math.max(8, Math.min(width, height) * 0.42)
+    });
+    contourStart = contourEnd + 1;
+  }
+
   let minX = 32767, minY = 32767, maxX = -32768, maxY = -32768;
-  for (let i = 0; i < pointCount; i++) {
-    const side = xs[i] >= cx ? 1 : -1;
-    xs[i] = clampInt16(xs[i] * scale + side * weightUnits);
-    ys[i] = clampInt16(ys[i] * scale + riseUnits);
-    minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i]);
-    minY = Math.min(minY, ys[i]); maxY = Math.max(maxY, ys[i]);
+  for (const box of contourBoxes) {
+    const safeWeight = Math.max(-box.limit, Math.min(box.limit, weightUnits));
+    for (let i = box.start; i <= box.end; i++) {
+      const vx = xs[i] - box.cx;
+      const vy = ys[i] - box.cy;
+      const len = Math.max(1, Math.hypot(vx, vy));
+      const nx = vx / len;
+      const ny = vy / len;
+      xs[i] = clampInt16(xMid + (xs[i] - xMid) * scale + nx * safeWeight);
+      ys[i] = clampInt16(yMid + (ys[i] - yMid) * scale + ny * safeWeight * 0.35 + riseUnits);
+      minX = Math.min(minX, xs[i]); maxX = Math.max(maxX, xs[i]);
+      minY = Math.min(minY, ys[i]); maxY = Math.max(maxY, ys[i]);
+    }
   }
 
   const size = 10 + contours * 2 + 2 + instructionLength + pointCount + pointCount * 4;
@@ -2039,7 +2080,7 @@ function buildExportAdjustments(fb) {
   const upem = state.font?.unitsPerEm || 1000;
   const scale = Math.max(0.2, Math.min(4, state.fontSize / 36));
   const riseUnits = Math.round((state.baselineOffset / Math.max(1, state.fontSize)) * upem);
-  const weightUnits = Math.round((state.fontWeight / Math.max(1, state.fontSize)) * upem * 0.45);
+  const weightUnits = Math.round((state.fontWeight / 100) * upem * 0.18);
   const spacingUnits = Math.round((state.letterSpacing / Math.max(1, state.fontSize)) * upem);
   const glyphMap = buildGlyphTransformMap(fb, scale, riseUnits, weightUnits);
   const tables = patchVerticalMetrics(fb, state.lineHeight, upem);

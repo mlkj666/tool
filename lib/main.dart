@@ -389,15 +389,17 @@ class ToolPanel extends StatefulWidget {
   State<ToolPanel> createState() => _ToolPanelState();
 }
 
-class _ToolPanelState extends State<ToolPanel> {
+class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
   static const _nativeChannel = MethodChannel('bs_font/native');
   late final WebViewController _controller;
   var _progress = 0;
+  var _reloadingAfterResume = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
@@ -432,13 +434,52 @@ class _ToolPanelState extends State<ToolPanel> {
     );
   }
 
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _recoverToolAfterResume();
+    }
+  }
+
   Future<void> _loadTool() async {
+    if (mounted) {
+      setState(() {
+        _error = null;
+        _progress = 0;
+      });
+    }
     var html = await rootBundle.loadString('assets/web/tool.html');
     html = html.replaceFirst(
       '__BS_APP_USER_JSON__',
       jsonEncode(widget.user.toJson()),
     );
     await _controller.loadHtmlString(html);
+  }
+
+  Future<void> _recoverToolAfterResume() async {
+    if (_reloadingAfterResume) return;
+    _reloadingAfterResume = true;
+    try {
+      if (_error != null) {
+        await _loadTool();
+        return;
+      }
+      final result = await _controller.runJavaScriptReturningResult(
+        'Boolean(window.__bsToolReady && document.getElementById("toolView"))',
+      );
+      final alive = result == true || result.toString() == 'true';
+      if (!alive) await _loadTool();
+    } catch (_) {
+      await _loadTool();
+    } finally {
+      _reloadingAfterResume = false;
+    }
   }
 
   Future<void> _saveExportedFile(String payload) async {
