@@ -934,7 +934,7 @@ private enum CoreTextOutlineConverter {
           let cgFont = CGFont(provider) else {
       throw NativeFontError.unsupportedFont
     }
-    var tables = try readTables(data)
+    var tables = try NativeTTFProcessor.readTables(data)
     guard let maxp = tables["maxp"], let head = tables["head"], let hhea = tables["hhea"] else {
       throw NativeFontError.malformedFont
     }
@@ -953,7 +953,7 @@ private enum CoreTextOutlineConverter {
 
     for index in 0..<numGlyphs {
       let glyph = CGGlyph(index)
-      let contours = collectContours(cgFont.createPath(for: glyph))
+      let contours = collectContours(CTFontCreatePathForGlyph(ctFont, glyph, nil))
       let encoded = encodeGlyph(contours)
       glyf.append(encoded.data)
       if glyf.count % 2 != 0 { glyf.append(0) }
