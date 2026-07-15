@@ -423,6 +423,12 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
         <input type="range" id="rngBaseline" min="-80" max="120" value="0" step="1">
         <div class="val-row"><label>行距</label><span class="val" id="valLineHeight">+0%</span></div>
         <input type="range" id="rngLineHeight" min="-80" max="120" value="0" step="1">
+        <div class="val-row" style="margin-top:14px;"><label>作用范围</label></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px;">
+          <button class="btn accent" id="btnTargetAll" type="button">全部字符</button>
+          <button class="btn" id="btnTargetChars" type="button">指定字符</button>
+        </div>
+        <input type="text" id="txtTargetChars" placeholder="输入需要调整的字符" style="display:none;width:100%;margin-top:9px;">
         <button class="btn accent full" id="btnApplyLayout" style="margin-top:14px;">应用调整</button>
       </div>
 
@@ -638,10 +644,12 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 
 <script type="module">
 const state = {
-  font: null, fontBuffer: null, originalFontBuffer: null, fontName: '', previewText: '爆闪 STUDIO 字体 修符工具',
-  loadedFontFamily: null, 
+  font: null, originalFont: null, fontBuffer: null, originalFontBuffer: null, fontName: '', previewText: '爆闪 STUDIO 字体 修符工具',
+  loadedFontFamily: null, originalLoadedFontFamily: null,
+  currentFontFace: null, originalFontFace: null, currentFontUrl: null, originalFontUrl: null,
   previewFontSize: 46,
   fontSize: 0, fontWeight: 0, letterSpacing: 0, baselineOffset: 0, lineHeight: 0,
+  targetAll: true, targetChars: '',
   globalColor: '#111827', perCharColors: {}, randomGlyphColors: {}, glyphImages: {}, drawnGlyphs: {},
   pendingAssignments: [], 
 };
@@ -654,6 +662,7 @@ const dom = {
   rngSize: $('rngSize'), valSize: $('valSize'), rngWeight: $('rngWeight'), valWeight: $('valWeight'),
   rngSpacing: $('rngSpacing'), valSpacing: $('valSpacing'), rngBaseline: $('rngBaseline'), valBaseline: $('valBaseline'),
   rngLineHeight: $('rngLineHeight'), valLineHeight: $('valLineHeight'), btnApplyLayout: $('btnApplyLayout'),
+  btnTargetAll: $('btnTargetAll'), btnTargetChars: $('btnTargetChars'), txtTargetChars: $('txtTargetChars'),
   colorGlobal: $('colorGlobal'), addCharColorPanel: $('addCharColorPanel'), newCharInput: $('newCharInput'), newCharColor: $('newCharColor'),
   btnRandomAllColors: $('btnRandomAllColors'), btnClearRandomColors: $('btnClearRandomColors'),
   
@@ -932,41 +941,50 @@ function resetLayoutDeltas() {
   syncLayoutControls();
 }
 
-// ★ 终极绝杀：利用原生 CSS + Base64 暴力注入字体，绕过 JS API 对颜色表的屏蔽
-function loadAndRegisterFont(buffer, b64Data = null) {
-    const fontFaceName = 'CustomFont_' + Date.now();
-    const base64 = b64Data || arrayBufferToBase64(buffer);
-    const dataUrl = `data:application/octet-stream;base64,${base64}`;
-    
-    // 生成原生 CSS 样式强制浏览器内核读取全量表数据 (包含 COLR/CPAL/SVG)
-    const style = document.createElement('style');
-    style.innerHTML = `
-      @font-face {
-        font-family: '${fontFaceName}';
-        src: url('${dataUrl}');
-      }
-    `;
-    document.head.appendChild(style);
+function syncTargetScope() {
+  dom.btnTargetAll.classList.toggle('accent', state.targetAll);
+  dom.btnTargetChars.classList.toggle('accent', !state.targetAll);
+  dom.txtTargetChars.style.display = state.targetAll ? 'none' : 'block';
+  dom.txtTargetChars.value = state.targetChars;
+}
 
-    // 挂载一个隐藏节点，逼迫浏览器布局引擎必须立刻去解析这个彩色字体
-    const testSpan = document.createElement('span');
-    testSpan.style.fontFamily = `'${fontFaceName}'`;
-    testSpan.style.position = 'absolute';
-    testSpan.style.opacity = '0';
-    testSpan.style.pointerEvents = 'none';
-    testSpan.textContent = '测试';
-    document.body.appendChild(testSpan);
+dom.btnTargetAll.addEventListener('click', () => { state.targetAll = true; syncTargetScope(); });
+dom.btnTargetChars.addEventListener('click', () => { state.targetAll = false; syncTargetScope(); dom.txtTargetChars.focus(); });
+dom.txtTargetChars.addEventListener('input', () => { state.targetChars = dom.txtTargetChars.value; });
+syncTargetScope();
 
-    // 回调渲染
-    document.fonts.load(`10px "${fontFaceName}"`).then(() => {
-        state.loadedFontFamily = fontFaceName;
-        renderPreview();
-        setTimeout(() => testSpan.remove(), 1000);
-    }).catch(err => {
-        console.warn("加载字体警告 (可忽略):", err);
-        state.loadedFontFamily = fontFaceName;
-        setTimeout(() => { renderPreview(); testSpan.remove(); }, 200);
-    });
+function releaseRegisteredFont(faceKey, urlKey) {
+  const face = state[faceKey];
+  const url = state[urlKey];
+  if (face && document.fonts && document.fonts.delete) document.fonts.delete(face);
+  if (url) URL.revokeObjectURL(url);
+  state[faceKey] = null;
+  state[urlKey] = null;
+}
+
+async function loadAndRegisterFont(buffer, target = 'current') {
+  const isOriginal = target === 'original';
+  const faceKey = isOriginal ? 'originalFontFace' : 'currentFontFace';
+  const urlKey = isOriginal ? 'originalFontUrl' : 'currentFontUrl';
+  const familyKey = isOriginal ? 'originalLoadedFontFamily' : 'loadedFontFamily';
+  releaseRegisteredFont(faceKey, urlKey);
+
+  const family = `${isOriginal ? 'OriginalFont' : 'CurrentFont'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const url = URL.createObjectURL(new Blob([buffer.slice(0)], { type: 'font/ttf' }));
+  const face = new FontFace(family, `url(${url})`);
+  state[urlKey] = url;
+  state[faceKey] = face;
+  try {
+    await face.load();
+    document.fonts.add(face);
+    state[familyKey] = family;
+  } catch (error) {
+    releaseRegisteredFont(faceKey, urlKey);
+    throw new Error('字体预览加载失败: ' + error.message);
+  }
+  originalPreviewCache.key = '';
+  schedulePreviewRender(true);
+  return family;
 }
 
 dom.btnExport.addEventListener('click', () => {
@@ -997,9 +1015,11 @@ dom.fileConfig.addEventListener('change', async e => {
     if (config.fontBufferB64) { 
         state.fontBuffer = base64ToArrayBuffer(config.fontBufferB64); 
         state.originalFontBuffer = state.fontBuffer.slice(0);
-        state.font = opentype.parse(state.fontBuffer); 
+        state.font = opentype.parse(state.fontBuffer);
+        state.originalFont = opentype.parse(state.originalFontBuffer);
         state.fontName = config.fontName || ''; 
-        loadAndRegisterFont(state.fontBuffer, config.fontBufferB64);
+        await loadAndRegisterFont(state.originalFontBuffer, 'original');
+        await loadAndRegisterFont(state.fontBuffer, 'current');
     }
     updateGlyphList(); updateCharColorList(); updateRandomColorButton(); renderPreview();
     toast('配置读取成功', 'success');
@@ -1012,12 +1032,12 @@ $('fileFont').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   try {
     const buffer = await file.arrayBuffer();
-    state.fontBuffer = buffer; state.originalFontBuffer = buffer.slice(0); state.font = opentype.parse(buffer);
+    state.fontBuffer = buffer; state.originalFontBuffer = buffer.slice(0); state.font = opentype.parse(buffer); state.originalFont = opentype.parse(state.originalFontBuffer);
     state.fontName = file.name; dom.fontName.textContent = file.name;
     resetTypographySettings();
     
-    // ★ 使用无损底层注入方案
-    loadAndRegisterFont(buffer);
+    await loadAndRegisterFont(state.originalFontBuffer, 'original');
+    await loadAndRegisterFont(buffer, 'current');
 
     toast(`已导入字体: ${file.name}`, 'success'); renderPreview();
   } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
@@ -1077,13 +1097,15 @@ dom.canvasWrap.addEventListener('drop', async e => {
       try {
           const buffer = await fontFiles[0].arrayBuffer(); 
           state.fontBuffer = buffer;
-          state.font = opentype.parse(state.fontBuffer); 
+          state.originalFontBuffer = buffer.slice(0);
+          state.font = opentype.parse(state.fontBuffer);
+          state.originalFont = opentype.parse(state.originalFontBuffer);
           state.fontName = fontFiles[0].name; 
           dom.fontName.textContent = fontFiles[0].name;
           resetTypographySettings();
           
-          // ★ 使用无损底层注入方案
-          loadAndRegisterFont(buffer);
+          await loadAndRegisterFont(state.originalFontBuffer, 'original');
+          await loadAndRegisterFont(buffer, 'current');
 
           toast(`已导入字体: ${fontFiles[0].name}`, 'success'); 
       } catch (err) { toast(`字体解析失败: ${err.message}`, 'error'); }
@@ -1453,6 +1475,7 @@ dom.btnClearRandomColors.addEventListener('click', () => {
 // Slider & Color bindings 
 let previewFrame = 0;
 let previewDebounce = 0;
+let previewDragging = false;
 function schedulePreviewRender(immediate = false) {
   if (previewFrame) return;
   const run = () => {
@@ -1471,9 +1494,10 @@ function schedulePreviewRender(immediate = false) {
 
 function bindSlider(id, valId, key, format) {
   $(id).addEventListener('input', () => {
-    const v = parseFloat($(id).value); state[key] = v; $(valId).textContent = format(v); schedulePreviewRender();
+    previewDragging = true;
+    const v = parseFloat($(id).value); state[key] = v; $(valId).textContent = format(v); schedulePreviewRender(true);
   });
-  $(id).addEventListener('change', () => schedulePreviewRender(true));
+  $(id).addEventListener('change', () => { previewDragging = false; schedulePreviewRender(true); });
 }
 bindSlider('rngSize', 'valSize', 'fontSize', formatPercentDelta);
 bindSlider('rngWeight', 'valWeight', 'fontWeight', formatPercentDelta);
@@ -1493,13 +1517,60 @@ function getSafeAdvanceWidth(font, ch, fontSize) {
   } catch (e) { return fontSize * 0.6; } 
 }
 
+function getKerningOffset(font, previousChar, ch, fontSize) {
+  if (!font || !previousChar || !font.getKerningValue) return 0;
+  try {
+    const unitsPerEm = font.unitsPerEm || 1000;
+    const kerning = font.getKerningValue(font.charToGlyph(previousChar), font.charToGlyph(ch));
+    return kerning * fontSize / unitsPerEm;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function buildTextLines(text, font, fontSize, spacing, wrapWidth, includeCustomGlyphs) {
+  const lines = [];
+  let line = [];
+  let width = 0;
+  let previousChar = '';
+  for (const ch of [...text]) {
+    if (ch === '\n') {
+      lines.push(line);
+      line = [];
+      width = 0;
+      previousChar = '';
+      continue;
+    }
+    const custom = includeCustomGlyphs ? (state.drawnGlyphs[ch] || state.glyphImages[ch]) : null;
+    const glyphWidth = custom ? fontSize * (custom.spacing || 1) : getSafeAdvanceWidth(font, ch, fontSize);
+    const kerning = custom ? 0 : getKerningOffset(font, previousChar, ch, fontSize);
+    const nextWidth = line.length ? width + spacing + kerning + glyphWidth : glyphWidth;
+    if (line.length && nextWidth > wrapWidth) {
+      lines.push(line);
+      line = [];
+      width = 0;
+      previousChar = '';
+    }
+    const effectiveKerning = line.length ? kerning : 0;
+    line.push({ ch, w: glyphWidth, kern: effectiveKerning });
+    width = line.length === 1 ? glyphWidth : width + spacing + effectiveKerning + glyphWidth;
+    previousChar = ch;
+  }
+  if (line.length || !lines.length) lines.push(line);
+  return {
+    lines,
+    widths: lines.map(items => items.reduce((sum, item, index) => sum + item.w + (index ? spacing + item.kern : 0), 0)),
+  };
+}
+
 const imageCache = {}; 
+const originalPreviewCache = { key: '', canvas: document.createElement('canvas'), cssHeight: 0 };
 
 function renderPreview() {
   const canvas = dom.previewCanvas; const ctx = canvas.getContext('2d');
   const text = state.previewText || '预览文字';
   
-  const ratio = window.devicePixelRatio || 1;
+  const ratio = previewDragging ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   
   if (!state.font && Object.keys(state.glyphImages).length === 0 && Object.keys(state.drawnGlyphs).length === 0) {
     canvas.width = 400 * ratio; canvas.height = 100 * ratio; 
@@ -1517,42 +1588,19 @@ function renderPreview() {
   const lineHeight = Math.max(0.4, 1.25 * (1 + state.lineHeight / 100));
   const padding = 40;
   const wrapWidth = Math.max(260, (dom.canvasWrap.clientWidth || window.innerWidth || 360) - padding * 2 - 28);
-  const chars = [...text]; const lineGroups = []; let currentLine = []; let currentWidth = 0;
-  for (const ch of chars) {
-    if (ch === '\n') {
-      if (currentLine.length) lineGroups.push(currentLine);
-      currentLine = []; currentWidth = 0;
-      continue;
-    }
-    // 获取字形信息，考虑字距调整
-    const glyphInfo = state.drawnGlyphs[ch] || state.glyphImages[ch];
-    let chWidth;
-    if (glyphInfo) {
-        // 如果是图片/手绘，宽度受字距调整比例影响
-        chWidth = renderFontSize * (glyphInfo.spacing || 1.0);
-    } else {
-        // 如果是原字体，直接获取宽度
-        chWidth = state.font ? getSafeAdvanceWidth(state.font, ch, renderFontSize) : renderFontSize * 0.6;
-    }
-    const nextWidth = currentLine.length ? currentWidth + letterSpacing + chWidth : chWidth;
-    if (currentLine.length && nextWidth > wrapWidth) {
-      lineGroups.push(currentLine);
-      currentLine = [];
-      currentWidth = 0;
-    }
-    currentLine.push({ ch, w: chWidth });
-    currentWidth = currentLine.length === 1 ? chWidth : currentWidth + letterSpacing + chWidth;
-  }
-  if (currentLine.length) lineGroups.push(currentLine);
-
-  if (!lineGroups.length) lineGroups.push([]);
-  const lineWidths = lineGroups.map(line => { let w = 0; for(const item of line) w += item.w + letterSpacing; return w > 0 ? w - letterSpacing : 0; });
-  const exactMaxWidth = Math.min(Math.max(...lineWidths, 300), wrapWidth);
+  const adjustedLayout = buildTextLines(text, state.font, renderFontSize, letterSpacing, wrapWidth, true);
+  const lineGroups = adjustedLayout.lines;
+  const lineWidths = adjustedLayout.widths;
+  const originalLineHeightPx = fontSize * 1.25;
+  const originalLayout = buildTextLines(text, state.originalFont || state.font, fontSize, 0, wrapWidth, false);
+  const widestLine = Math.max(...lineWidths, ...originalLayout.widths, 300);
+  const exactMaxWidth = Math.min(widestLine, wrapWidth);
   const totalLines = lineGroups.length || 1; const lineHeightPx = renderFontSize * lineHeight;
   const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
   
   const canvasWidth = Math.max(300, Math.min(exactMaxWidth + padding * 2, (dom.canvasWrap.clientWidth || exactMaxWidth + padding * 2) - 8)); 
-  const canvasHeight = Math.max(sectionHeight * 2 + padding, 200);
+  const originalSectionHeight = originalLayout.lines.length * originalLineHeightPx + padding;
+  const canvasHeight = Math.max(sectionHeight + originalSectionHeight + padding, 200);
 
   canvas.width = canvasWidth * ratio; 
   canvas.height = canvasHeight * ratio; 
@@ -1569,6 +1617,7 @@ function renderPreview() {
     const line = lineGroups[i]; let x = (canvasWidth - lineWidths[i]) / 2;
     for (const item of line) {
       const ch = item.ch; 
+      x += item.kern || 0;
       const color = colorForChar(ch);
       const drawnInfo = state.drawnGlyphs[ch]; const imageInfo = state.glyphImages[ch];
       
@@ -1580,7 +1629,7 @@ function renderPreview() {
           x += renderFontSize * (imageInfo.spacing || 1.0) + letterSpacing;
       } else if (state.font) { 
           drawFontGlyph(ctx, ch, x, y, renderFontSize, color, baselineOffset);
-          x += getSafeAdvanceWidth(state.font, ch, renderFontSize) + letterSpacing;
+          x += item.w + letterSpacing;
       } else { 
           ctx.fillStyle = color; ctx.font = `${renderFontSize}px sans-serif`; ctx.fillText(ch, x, y);
           x += ctx.measureText(ch).width + letterSpacing; 
@@ -1590,27 +1639,46 @@ function renderPreview() {
   }
 
   const originalStartY = padding + sectionHeight;
-  ctx.font = '13px sans-serif'; ctx.fillStyle = '#9CA3AF'; ctx.textAlign = 'center'; 
-  ctx.fillText('📄 原字体对照', canvasWidth / 2, originalStartY - 15);
-  ctx.beginPath(); ctx.moveTo(padding, originalStartY - 35); ctx.lineTo(canvasWidth - padding, originalStartY - 35); ctx.strokeStyle = '#E5E7EB'; ctx.stroke();
+  drawOriginalPreviewLayer(ctx, text, originalLayout, canvasWidth, originalSectionHeight, originalStartY, ratio, fontSize, originalLineHeightPx, padding);
+}
 
-  if (!state.font) { 
-      ctx.fillStyle = '#9CA3AF'; ctx.font = '14px sans-serif'; 
-      ctx.fillText('尚未加载原字体', canvasWidth / 2, originalStartY + 30); 
-      return; 
-  }
-  
-  let origY = originalStartY + fontSize;
-  for (let i = 0; i < lineGroups.length; i++) {
-    const line = lineGroups[i]; let x = (canvasWidth - lineWidths[i]) / 2;
-    for (const item of line) {
-      const ch = item.ch; 
-      // 对照区：只传颜色，由原生的 Canvas 决定是否覆盖颜色
-      drawFontGlyph(ctx, ch, x, origY, fontSize, '#6B7280', 0, true);
-      x += getSafeAdvanceWidth(state.font, ch, fontSize) + Math.round(fontSize * state.letterSpacing / 100);
+function drawOriginalPreviewLayer(ctx, text, layout, canvasWidth, sectionHeight, startY, ratio, fontSize, lineHeight, padding) {
+  const family = state.originalLoadedFontFamily || state.loadedFontFamily || '';
+  const cacheKey = [text, canvasWidth, sectionHeight, ratio, family, state.originalFontBuffer?.byteLength || 0].join('|');
+  const cached = originalPreviewCache.canvas;
+  if (originalPreviewCache.key !== cacheKey) {
+    cached.width = Math.max(1, Math.round(canvasWidth * ratio));
+    cached.height = Math.max(1, Math.round(sectionHeight * ratio));
+    cached.style.width = `${canvasWidth}px`;
+    cached.style.height = `${sectionHeight}px`;
+    const originalCtx = cached.getContext('2d');
+    originalCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    originalCtx.clearRect(0, 0, canvasWidth, sectionHeight);
+    originalCtx.font = '13px sans-serif';
+    originalCtx.fillStyle = '#9CA3AF';
+    originalCtx.textAlign = 'center';
+    originalCtx.fillText('原字体对照', canvasWidth / 2, 20);
+    originalCtx.beginPath();
+    originalCtx.moveTo(padding, 36);
+    originalCtx.lineTo(canvasWidth - padding, 36);
+    originalCtx.strokeStyle = '#E5E7EB';
+    originalCtx.stroke();
+
+    let y = 44 + fontSize;
+    for (let i = 0; i < layout.lines.length; i++) {
+      const line = layout.lines[i];
+      let x = (canvasWidth - layout.widths[i]) / 2;
+      for (const item of line) {
+        x += item.kern || 0;
+        drawFontGlyph(originalCtx, item.ch, x, y, fontSize, '#6B7280', 0, true);
+        x += item.w;
+      }
+      y += lineHeight;
     }
-    origY += lineHeightPx;
+    originalPreviewCache.key = cacheKey;
+    originalPreviewCache.cssHeight = sectionHeight;
   }
+  ctx.drawImage(cached, 0, startY, canvasWidth, originalPreviewCache.cssHeight);
 }
 
 function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOriginal = false) {
@@ -1619,9 +1687,11 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
   const negativeWeight = Math.min(Math.abs(Math.min(0, weightPercent)), 80);
   const positiveStroke = Math.max(0, weightPercent) / 100 * fontSize * 0.18;
   
-  if (state.loadedFontFamily) {
+  const fontFamily = isOriginal ? (state.originalLoadedFontFamily || state.loadedFontFamily) : state.loadedFontFamily;
+  const outlineFont = isOriginal ? (state.originalFont || state.font) : state.font;
+  if (fontFamily) {
       ctx.fillStyle = color;
-      ctx.font = `${fontSize}px "${state.loadedFontFamily}", sans-serif`;
+      ctx.font = `${fontSize}px "${fontFamily}", sans-serif`;
       if (negativeWeight > 0) {
           const metrics = ctx.measureText(ch);
           const w = Math.max(metrics.width, fontSize * 0.5);
@@ -1645,13 +1715,13 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
       }
   } else {
       try {
-        const path = state.font.getPath(ch, x, adjustedY, fontSize); 
+        const path = outlineFont.getPath(ch, x, adjustedY, fontSize);
         path.fill = color; 
         if (!isOriginal && positiveStroke > 0) {
             path.stroke = color; path.strokeWidth = positiveStroke;
         }
         if (negativeWeight > 0) {
-            const w = getSafeAdvanceWidth(state.font, ch, fontSize);
+            const w = getSafeAdvanceWidth(outlineFont, ch, fontSize);
             const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
             const sy = Math.max(0.78, 1 - negativeWeight * 0.0025);
             ctx.save();
@@ -2383,6 +2453,7 @@ function hasPendingLayoutAdjust() {
 async function applyNativeLayoutAdjust(showProgress = true) {
   if (!state.font || !state.fontBuffer) throw new Error('未检测到导入的字体');
   if (!hasPendingLayoutAdjust()) return state.fontBuffer;
+  if (!state.targetAll && !state.targetChars.trim()) throw new Error('请输入需要调整的指定字符');
   if (showProgress) {
     dom.exportModal.classList.add('show');
     dom.exportProgressBar.style.width = '25%';
@@ -2395,12 +2466,17 @@ async function applyNativeLayoutAdjust(showProgress = true) {
     weight: state.fontWeight,
     letter: state.letterSpacing,
     line: state.lineHeight,
-    rise: state.baselineOffset
+    rise: state.baselineOffset,
+    targetAll: state.targetAll,
+    chars: state.targetChars
   });
+  const parsed = opentype.parse(processed);
+  await loadAndRegisterFont(processed, 'current');
   state.fontBuffer = processed;
-  state.font = opentype.parse(processed);
-  loadAndRegisterFont(processed);
+  state.font = parsed;
   resetLayoutDeltas();
+  originalPreviewCache.key = '';
+  renderPreview();
   if (showProgress) {
     dom.exportProgressBar.style.width = '100%';
     dom.exportProgressText.textContent = '已更新预览字体';
@@ -2410,12 +2486,16 @@ async function applyNativeLayoutAdjust(showProgress = true) {
 }
 
 dom.btnApplyLayout.addEventListener('click', async () => {
+  if (dom.btnApplyLayout.disabled) return;
+  dom.btnApplyLayout.disabled = true;
   try {
     await applyNativeLayoutAdjust(true);
     toast('已应用调整，预览现在就是导出后的真实字体效果', 'success');
   } catch (e) {
     dom.exportModal.classList.remove('show');
     toast('应用失败: ' + e.message, 'error');
+  } finally {
+    dom.btnApplyLayout.disabled = false;
   }
 });
 

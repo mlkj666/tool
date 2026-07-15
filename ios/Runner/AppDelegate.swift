@@ -1,4 +1,5 @@
 import Flutter
+import CoreText
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
@@ -8,6 +9,7 @@ import UniformTypeIdentifiers
   private var pendingImageResult: FlutterResult?
   private var pendingSaveResult: FlutterResult?
   private var exportUrl: URL?
+  private let fontProcessingQueue = DispatchQueue(label: "icu.uxgzs.tool.font-processing", qos: .userInitiated)
 
   override func application(
     _ application: UIApplication,
@@ -170,18 +172,24 @@ import UniformTypeIdentifiers
       result(FlutterError(code: "bad_args", message: "字体数据无效", details: nil))
       return
     }
-    do {
       let params = NativeFontAdjustParams(
-        size: args["size"] as? Double ?? 36,
+        size: args["size"] as? Double ?? 0,
         weight: args["weight"] as? Double ?? 0,
         letter: args["letter"] as? Double ?? 0,
-        line: args["line"] as? Double ?? 1.4,
-        rise: args["rise"] as? Double ?? 0
-      )
-      let processed = try NativeTTFProcessor.adjust(data: data, params: params)
-      result(["base64": processed.base64EncodedString()])
-    } catch {
-      result(FlutterError(code: "process_failed", message: error.localizedDescription, details: nil))
+        line: args["line"] as? Double ?? 0,
+        rise: args["rise"] as? Double ?? 0,
+        targetAll: args["targetAll"] as? Bool ?? true,
+        chars: args["chars"] as? String ?? ""
+    )
+    fontProcessingQueue.async {
+      do {
+        let processed = try NativeOutlineFontProcessor.adjust(data: data, params: params)
+        let payload = ["base64": processed.base64EncodedString()]
+        DispatchQueue.main.async { result(payload) }
+      } catch {
+        let flutterError = FlutterError(code: "process_failed", message: error.localizedDescription, details: nil)
+        DispatchQueue.main.async { result(flutterError) }
+      }
     }
   }
 
@@ -204,6 +212,8 @@ private struct NativeFontAdjustParams {
   let letter: Double
   let line: Double
   let rise: Double
+  let targetAll: Bool
+  let chars: String
 }
 
 private enum NativeFontError: LocalizedError {
@@ -227,8 +237,8 @@ private struct FontTable {
 }
 
 private final class NativeTTFProcessor {
-  static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    var tables = try readTables(data)
+  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil) throws -> Data {
+    var tables = try NativeTTFProcessor.readTables(data)
     guard let head = tables["head"], let maxp = tables["maxp"], let loca = tables["loca"], let glyf = tables["glyf"] else {
       throw NativeFontError.unsupportedFont
     }
@@ -240,7 +250,7 @@ private final class NativeTTFProcessor {
     let spacingUnits = Int((params.letter / 100.0) * Double(upm) * 0.5)
 
     if abs(scale - 1.0) > 0.001 || riseUnits != 0 || weightUnits != 0 {
-      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits)
+      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits, selectedGlyphs: selectedGlyphs)
       if let patched {
         tables["glyf"]?.data = patched.glyf
         tables["loca"]?.data = patched.loca
@@ -249,7 +259,13 @@ private final class NativeTTFProcessor {
     }
 
     if spacingUnits != 0, let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      tables["hmtx"]?.data = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, spacingUnits: spacingUnits)
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, selectedGlyphs: selectedGlyphs)
+      tables["hmtx"]?.data = patchedHmtx
+      tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
+    } else if abs(scale - 1.0) > 0.001, let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: 0, selectedGlyphs: selectedGlyphs)
+      tables["hmtx"]?.data = patchedHmtx
+      tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
     }
 
     if abs(params.line) > 0.01 {
@@ -264,7 +280,7 @@ private final class NativeTTFProcessor {
     return serializeTables(tables, sfntVersion: readUInt32(data, 0))
   }
 
-  private static func readTables(_ data: Data) throws -> [String: FontTable] {
+  static func readTables(_ data: Data) throws -> [String: FontTable] {
     guard data.count >= 12 else { throw NativeFontError.malformedFont }
     let count = min(Int(readUInt16(data, 4)), max(0, (data.count - 12) / 16))
     var tables: [String: FontTable] = [:]
@@ -282,7 +298,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightUnits: Int) -> (glyf: Data, loca: Data, head: Data)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightUnits: Int, selectedGlyphs: Set<Int>?) -> (glyf: Data, loca: Data, head: Data)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -300,14 +316,21 @@ private final class NativeTTFProcessor {
     var chunks: [Data] = []
     var newOffsets = [Int](repeating: 0, count: numGlyphs + 1)
     var current = 0
+    var globalMinX = Int.max, globalMinY = Int.max, globalMaxX = Int.min, globalMaxY = Int.min
     for i in 0..<numGlyphs {
       newOffsets[i] = current
       var start = min(max(0, offsets[i]), glyf.count)
       var end = min(max(0, offsets[i + 1]), glyf.count)
       if start > end { swap(&start, &end) }
       var chunk = Data(glyf[start..<end])
-      if let transformed = transformSimpleGlyph(chunk, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits) {
+      if (selectedGlyphs == nil || selectedGlyphs!.contains(i)), let transformed = transformSimpleGlyph(chunk, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits) {
         chunk = transformed
+      }
+      if chunk.count >= 10 && readInt16(chunk, 0) != 0 {
+        globalMinX = min(globalMinX, Int(readInt16(chunk, 2)))
+        globalMinY = min(globalMinY, Int(readInt16(chunk, 4)))
+        globalMaxX = max(globalMaxX, Int(readInt16(chunk, 6)))
+        globalMaxY = max(globalMaxY, Int(readInt16(chunk, 8)))
       }
       chunks.append(chunk)
       current += chunk.count
@@ -333,6 +356,12 @@ private final class NativeTTFProcessor {
     var newHead = head
     if needsLong != longLoca {
       writeInt16(&newHead, 50, needsLong ? 1 : 0)
+    }
+    if globalMinX != Int.max {
+      writeInt16(&newHead, 36, globalMinX)
+      writeInt16(&newHead, 38, globalMinY)
+      writeInt16(&newHead, 40, globalMaxX)
+      writeInt16(&newHead, 42, globalMaxY)
     }
     return (newGlyf, newLoca, newHead)
   }
@@ -396,7 +425,6 @@ private final class NativeTTFProcessor {
       y += dy; ys.append(y)
     }
 
-    let xMid = Double(readInt16(chunk, 2) + readInt16(chunk, 6)) / 2.0
     let yMid = Double(readInt16(chunk, 4) + readInt16(chunk, 8)) / 2.0
     var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
     var contourStart = 0
@@ -410,7 +438,7 @@ private final class NativeTTFProcessor {
       )
       for i in contourStart...contourEnd {
         let offset = adjusted[i - contourStart]
-        xs[i] = clampInt16(Int(round(xMid + (Double(xs[i]) - xMid) * scale + offset.x)))
+        xs[i] = clampInt16(Int(round(Double(xs[i]) * scale + offset.x)))
         ys[i] = clampInt16(Int(round(yMid + (Double(ys[i]) - yMid) * scale + offset.y + Double(riseUnits))))
         minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
         minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
@@ -453,10 +481,9 @@ private final class NativeTTFProcessor {
     let oldMinY = Int(readInt16(chunk, 4))
     let oldMaxX = Int(readInt16(chunk, 6))
     let oldMaxY = Int(readInt16(chunk, 8))
-    let xMid = Double(oldMinX + oldMaxX) / 2.0
     let yMid = Double(oldMinY + oldMaxY) / 2.0
-    let newMinX = clampInt16(Int(round(xMid + (Double(oldMinX) - xMid) * scale)))
-    let newMaxX = clampInt16(Int(round(xMid + (Double(oldMaxX) - xMid) * scale)))
+    let newMinX = clampInt16(Int(round(Double(oldMinX) * scale)))
+    let newMaxX = clampInt16(Int(round(Double(oldMaxX) * scale)))
     let newMinY = clampInt16(Int(round(yMid + (Double(oldMinY) - yMid) * scale + Double(riseUnits))))
     let newMaxY = clampInt16(Int(round(yMid + (Double(oldMaxY) - yMid) * scale + Double(riseUnits))))
 
@@ -545,15 +572,29 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchHmtx(hmtx: Data, hhea: Data, spacingUnits: Int) -> Data {
+  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, selectedGlyphs: Set<Int>?) -> Data {
     guard hhea.count >= 36 else { return hmtx }
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var out = hmtx
     for i in 0..<count {
+      if let selectedGlyphs, !selectedGlyphs.contains(i) { continue }
       let p = i * 4
-      let width = Int(readUInt16(out, p)) + spacingUnits
+      let oldWidth = Int(readUInt16(out, p))
+      let width = Int(round(Double(oldWidth) * scale)) + spacingUnits
       writeUInt16(&out, p, UInt16(max(0, min(65535, width))))
+      let oldBearing = Int(readInt16(out, p + 2))
+      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * scale)))
     }
+    return out
+  }
+
+  private static func patchAdvanceWidthMax(hhea: Data, hmtx: Data) -> Data {
+    guard hhea.count >= 36 else { return hhea }
+    var out = hhea
+    let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
+    var maximum = 0
+    for index in 0..<count { maximum = max(maximum, Int(readUInt16(hmtx, index * 4))) }
+    writeUInt16(&out, 10, UInt16(min(65535, maximum)))
     return out
   }
 
@@ -649,7 +690,7 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func serializeTables(_ tables: [String: FontTable], sfntVersion: UInt32) -> Data {
+  static func serializeTables(_ tables: [String: FontTable], sfntVersion: UInt32) -> Data {
     var items = tables.values.sorted { $0.tag < $1.tag }
     let count = items.count
     let headerSize = 12 + count * 16
@@ -771,4 +812,310 @@ private final class NativeTTFProcessor {
   private static func clampF2Dot14(_ value: Double) -> Int {
     max(-32768, min(32767, Int(round(value))))
   }
+}
+
+private enum NativeOutlineFontProcessor {
+  static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
+    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars)
+    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs)
+  }
+}
+
+private struct OutlinePoint {
+  var x: Int
+  var y: Int
+  var onCurve: Bool
+}
+
+private final class PathCollector {
+  var contours: [[OutlinePoint]] = []
+  var current: [OutlinePoint] = []
+  var cursor = CGPoint.zero
+
+  func move(to point: CGPoint) {
+    finishContour()
+    cursor = point
+    current = [outlinePoint(point)]
+  }
+
+  func line(to point: CGPoint) {
+    cursor = point
+    current.append(outlinePoint(point))
+  }
+
+  func quad(control: CGPoint, end: CGPoint) {
+    current.append(outlinePoint(control, onCurve: false))
+    current.append(outlinePoint(end))
+    cursor = end
+  }
+
+  func cubic(control1: CGPoint, control2: CGPoint, end: CGPoint) {
+    let start = cursor
+    let steps = max(1, min(12, Int(ceil(curveLength([start, control1, control2, end]) / 180))))
+    var segmentStart = start
+    for index in 0..<steps {
+      let t0 = CGFloat(index) / CGFloat(steps)
+      let t1 = CGFloat(index + 1) / CGFloat(steps)
+      let segmentEnd = cubicPoint(start, control1, control2, end, t1)
+      let middle = cubicPoint(start, control1, control2, end, (t0 + t1) / 2)
+      let quadraticControl = CGPoint(
+        x: 2 * middle.x - (segmentStart.x + segmentEnd.x) / 2,
+        y: 2 * middle.y - (segmentStart.y + segmentEnd.y) / 2
+      )
+      current.append(outlinePoint(quadraticControl, onCurve: false))
+      current.append(outlinePoint(segmentEnd))
+      segmentStart = segmentEnd
+    }
+    cursor = end
+  }
+
+  func close() {
+    finishContour()
+  }
+
+  func finish() -> [[OutlinePoint]] {
+    finishContour()
+    return contours
+  }
+
+  private func finishContour() {
+    guard current.count >= 3 else {
+      current.removeAll(keepingCapacity: true)
+      return
+    }
+    if current.first?.x == current.last?.x && current.first?.y == current.last?.y {
+      current.removeLast()
+    }
+    if current.count >= 3 { contours.append(simplify(current)) }
+    current.removeAll(keepingCapacity: true)
+  }
+
+  private func simplify(_ points: [OutlinePoint]) -> [OutlinePoint] {
+    guard points.count > 3, points.allSatisfy(\.onCurve) else { return points }
+    var output: [OutlinePoint] = []
+    for index in points.indices {
+      let previous = points[(index - 1 + points.count) % points.count]
+      let point = points[index]
+      let next = points[(index + 1) % points.count]
+      let cross = (point.x - previous.x) * (next.y - point.y) - (point.y - previous.y) * (next.x - point.x)
+      if abs(cross) > 1 || output.isEmpty { output.append(point) }
+    }
+    return output.count >= 3 ? output : points
+  }
+
+  private func curveLength(_ points: [CGPoint]) -> CGFloat {
+    var length: CGFloat = 0
+    for index in 1..<points.count {
+      length += hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y)
+    }
+    return length
+  }
+
+  private func cubicPoint(_ p0: CGPoint, _ p1: CGPoint, _ p2: CGPoint, _ p3: CGPoint, _ t: CGFloat) -> CGPoint {
+    let mt = 1 - t
+    return CGPoint(
+      x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+      y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
+    )
+  }
+
+  private func outlinePoint(_ point: CGPoint, onCurve: Bool = true) -> OutlinePoint {
+    OutlinePoint(x: clamp(Int(round(point.x))), y: clamp(Int(round(point.y))), onCurve: onCurve)
+  }
+
+  private func clamp(_ value: Int) -> Int {
+    max(-32768, min(32767, value))
+  }
+}
+
+private enum CoreTextOutlineConverter {
+  static func convert(data: Data, selectedCharacters: String) throws -> (data: Data, selectedGlyphs: Set<Int>) {
+    guard let provider = CGDataProvider(data: data as CFData),
+          let cgFont = CGFont(provider) else {
+      throw NativeFontError.unsupportedFont
+    }
+    var tables = try readTables(data)
+    guard let maxp = tables["maxp"], let head = tables["head"], let hhea = tables["hhea"] else {
+      throw NativeFontError.malformedFont
+    }
+    let numGlyphs = max(1, Int(readUInt16(maxp.data, 4)))
+    let unitsPerEm = max(1, Int(cgFont.unitsPerEm))
+    let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(unitsPerEm), nil, nil)
+    let selectedGlyphs = glyphIDs(for: selectedCharacters, font: ctFont)
+    var offsets: [Int] = [0]
+    var glyf = Data()
+    var hmtx = Data()
+    var globalMinX = Int.max
+    var globalMinY = Int.max
+    var globalMaxX = Int.min
+    var globalMaxY = Int.min
+    var advanceMax = 0
+
+    for index in 0..<numGlyphs {
+      let glyph = CGGlyph(index)
+      let contours = collectContours(cgFont.createPath(for: glyph))
+      let encoded = encodeGlyph(contours)
+      glyf.append(encoded.data)
+      if glyf.count % 2 != 0 { glyf.append(0) }
+      offsets.append(glyf.count)
+
+      var mutableGlyph = glyph
+      var advance = CGSize.zero
+      withUnsafePointer(to: &mutableGlyph) { glyphPointer in
+        withUnsafeMutablePointer(to: &advance) { advancePointer in
+          _ = CTFontGetAdvancesForGlyphs(ctFont, .horizontal, glyphPointer, advancePointer, 1)
+        }
+      }
+      let width = max(0, min(65535, Int(round(advance.width))))
+      advanceMax = max(advanceMax, width)
+      appendUInt16(&hmtx, UInt16(width))
+      appendInt16(&hmtx, Int16(clamp(encoded.minX)))
+      if !contours.isEmpty {
+        globalMinX = min(globalMinX, encoded.minX)
+        globalMinY = min(globalMinY, encoded.minY)
+        globalMaxX = max(globalMaxX, encoded.maxX)
+        globalMaxY = max(globalMaxY, encoded.maxY)
+      }
+    }
+
+    var loca = Data()
+    for offset in offsets { appendUInt32(&loca, UInt32(offset)) }
+    var newHead = head.data
+    writeUInt16(&newHead, 18, UInt16(min(65535, unitsPerEm)))
+    writeInt16(&newHead, 36, globalMinX == Int.max ? 0 : globalMinX)
+    writeInt16(&newHead, 38, globalMinY == Int.max ? 0 : globalMinY)
+    writeInt16(&newHead, 40, globalMaxX == Int.min ? 0 : globalMaxX)
+    writeInt16(&newHead, 42, globalMaxY == Int.min ? 0 : globalMaxY)
+    writeInt16(&newHead, 50, 1)
+
+    var newHhea = hhea.data
+    writeUInt16(&newHhea, 10, UInt16(min(65535, advanceMax)))
+    writeUInt16(&newHhea, 34, UInt16(min(65535, numGlyphs)))
+    var newMaxp = Data(repeating: 0, count: 32)
+    writeUInt32(&newMaxp, 0, 0x00010000)
+    writeUInt16(&newMaxp, 4, UInt16(min(65535, numGlyphs)))
+
+    tables.removeValue(forKey: "CFF ")
+    tables.removeValue(forKey: "CFF2")
+    tables["head"] = FontTable(tag: "head", checksum: 0, data: newHead)
+    tables["hhea"] = FontTable(tag: "hhea", checksum: 0, data: newHhea)
+    tables["hmtx"] = FontTable(tag: "hmtx", checksum: 0, data: hmtx)
+    tables["maxp"] = FontTable(tag: "maxp", checksum: 0, data: newMaxp)
+    tables["glyf"] = FontTable(tag: "glyf", checksum: 0, data: glyf)
+    tables["loca"] = FontTable(tag: "loca", checksum: 0, data: loca)
+    return (NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000), selectedGlyphs)
+  }
+
+  private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
+    guard !text.isEmpty else { return [] }
+    var output = Set<Int>()
+    for scalar in text.unicodeScalars {
+      var characters: [UniChar]
+      if scalar.value <= 0xffff {
+        characters = [UniChar(scalar.value)]
+      } else {
+        let value = scalar.value - 0x10000
+        characters = [UniChar(0xD800 + (value >> 10)), UniChar(0xDC00 + (value & 0x3ff))]
+      }
+      var glyphs = [CGGlyph](repeating: 0, count: characters.count)
+      let mapped = characters.withUnsafeBufferPointer { characterPointer in
+        glyphs.withUnsafeMutableBufferPointer { glyphPointer in
+          CTFontGetGlyphsForCharacters(font, characterPointer.baseAddress!, glyphPointer.baseAddress!, characters.count)
+        }
+      }
+      if mapped {
+        for glyph in glyphs where glyph != 0 { output.insert(Int(glyph)) }
+      }
+    }
+    return output
+  }
+
+  private static func collectContours(_ path: CGPath?) -> [[OutlinePoint]] {
+    guard let path else { return [] }
+    let collector = PathCollector()
+    path.applyWithBlock { elementPointer in
+      let element = elementPointer.pointee
+      switch element.type {
+      case .moveToPoint: collector.move(to: element.points[0])
+      case .addLineToPoint: collector.line(to: element.points[0])
+      case .addQuadCurveToPoint: collector.quad(control: element.points[0], end: element.points[1])
+      case .addCurveToPoint: collector.cubic(control1: element.points[0], control2: element.points[1], end: element.points[2])
+      case .closeSubpath: collector.close()
+      @unknown default: break
+      }
+    }
+    return collector.finish()
+  }
+
+  private static func encodeGlyph(_ contours: [[OutlinePoint]]) -> (data: Data, minX: Int, minY: Int, maxX: Int, maxY: Int) {
+    let valid = contours.filter { $0.count >= 3 }
+    guard !valid.isEmpty else { return (Data(), 0, 0, 0, 0) }
+    let points = valid.flatMap { $0 }
+    let minX = points.map(\.x).min() ?? 0
+    let minY = points.map(\.y).min() ?? 0
+    let maxX = points.map(\.x).max() ?? 0
+    let maxY = points.map(\.y).max() ?? 0
+    var out = Data()
+    appendInt16(&out, Int16(valid.count))
+    appendInt16(&out, Int16(clamp(minX)))
+    appendInt16(&out, Int16(clamp(minY)))
+    appendInt16(&out, Int16(clamp(maxX)))
+    appendInt16(&out, Int16(clamp(maxY)))
+    var endpoint = -1
+    for contour in valid {
+      endpoint += contour.count
+      appendUInt16(&out, UInt16(endpoint))
+    }
+    appendUInt16(&out, 0)
+    for point in points { out.append(point.onCurve ? UInt8(0x01) : UInt8(0x00)) }
+    var previous = 0
+    for point in points {
+      appendInt16(&out, Int16(clamp(point.x - previous)))
+      previous = point.x
+    }
+    previous = 0
+    for point in points {
+      appendInt16(&out, Int16(clamp(point.y - previous)))
+      previous = point.y
+    }
+    return (out, minX, minY, maxX, maxY)
+  }
+
+  private static func readUInt16(_ data: Data, _ offset: Int) -> UInt16 {
+    guard offset + 2 <= data.count else { return 0 }
+    return UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+  }
+
+  private static func readUInt32(_ data: Data, _ offset: Int) -> UInt32 {
+    guard offset + 4 <= data.count else { return 0 }
+    return UInt32(data[offset]) << 24 | UInt32(data[offset + 1]) << 16 | UInt32(data[offset + 2]) << 8 | UInt32(data[offset + 3])
+  }
+
+  private static func appendUInt16(_ data: inout Data, _ value: UInt16) {
+    data.append(UInt8(value >> 8)); data.append(UInt8(value & 0xff))
+  }
+
+  private static func appendInt16(_ data: inout Data, _ value: Int16) {
+    appendUInt16(&data, UInt16(bitPattern: value))
+  }
+
+  private static func appendUInt32(_ data: inout Data, _ value: UInt32) {
+    data.append(UInt8(value >> 24)); data.append(UInt8((value >> 16) & 0xff)); data.append(UInt8((value >> 8) & 0xff)); data.append(UInt8(value & 0xff))
+  }
+
+  private static func writeUInt16(_ data: inout Data, _ offset: Int, _ value: UInt16) {
+    guard offset + 2 <= data.count else { return }
+    data[offset] = UInt8(value >> 8); data[offset + 1] = UInt8(value & 0xff)
+  }
+
+  private static func writeInt16(_ data: inout Data, _ offset: Int, _ value: Int) {
+    writeUInt16(&data, offset, UInt16(bitPattern: Int16(clamp(value))))
+  }
+
+  private static func writeUInt32(_ data: inout Data, _ offset: Int, _ value: UInt32) {
+    guard offset + 4 <= data.count else { return }
+    data[offset] = UInt8(value >> 24); data[offset + 1] = UInt8((value >> 16) & 0xff); data[offset + 2] = UInt8((value >> 8) & 0xff); data[offset + 3] = UInt8(value & 0xff)
+  }
+
+  private static func clamp(_ value: Int) -> Int { max(-32768, min(32767, value)) }
 }
