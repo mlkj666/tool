@@ -417,6 +417,10 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
         'NativeImagePicker',
         onMessageReceived: (message) => _pickNativeImages(message.message),
       )
+      ..addJavaScriptChannel(
+        'NativeFontProcessor',
+        onMessageReceived: (message) => _processNativeFont(message.message),
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) => setState(() => _progress = progress),
@@ -512,6 +516,36 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
       );
     } catch (_) {
       if (mounted) _snack('图片选择失败，请重新尝试');
+    }
+  }
+
+  Future<void> _processNativeFont(String payload) async {
+    var callbackId = '';
+    try {
+      final data = jsonDecode(payload);
+      if (data is! Map<String, dynamic>) return;
+      callbackId = (data['id'] ?? '').toString();
+      final result = await _nativeChannel.invokeMethod<Map<Object?, Object?>>(
+        'processFont',
+        data,
+      );
+      final jsPayload = jsonEncode({
+        'id': callbackId,
+        'success': true,
+        'base64': result?['base64']?.toString() ?? '',
+      });
+      await _controller.runJavaScript(
+        'window.receiveNativeFontResult($jsPayload)',
+      );
+    } catch (error) {
+      final jsPayload = jsonEncode({
+        'id': callbackId,
+        'success': false,
+        'message': error.toString(),
+      });
+      await _controller.runJavaScript(
+        'window.receiveNativeFontResult($jsPayload)',
+      );
     }
   }
 

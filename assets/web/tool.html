@@ -2119,6 +2119,34 @@ function scaleImage(dataUrl, scale) {
     });
 }
 
+let nativeFontRequestSeq = 0;
+const nativeFontCallbacks = new Map();
+
+function processFontWithNative(params) {
+  return new Promise((resolve, reject) => {
+    if (!window.NativeFontProcessor || !window.NativeFontProcessor.postMessage) {
+      reject(new Error('原生字体引擎不可用'));
+      return;
+    }
+    const id = `font_${Date.now()}_${++nativeFontRequestSeq}`;
+    const timer = setTimeout(() => {
+      nativeFontCallbacks.delete(id);
+      reject(new Error('原生字体引擎处理超时'));
+    }, 45000);
+    nativeFontCallbacks.set(id, { resolve, reject, timer });
+    window.NativeFontProcessor.postMessage(JSON.stringify({ id, ...params }));
+  });
+}
+
+window.receiveNativeFontResult = function(result) {
+  const callback = nativeFontCallbacks.get(result && result.id);
+  if (!callback) return;
+  clearTimeout(callback.timer);
+  nativeFontCallbacks.delete(result.id);
+  if (result.success && result.base64) callback.resolve(base64ToArrayBuffer(result.base64));
+  else callback.reject(new Error(result.message || '原生字体处理失败'));
+};
+
 $('btnExportFont').addEventListener('click', async () => {
   if (!state.font) return toast('执行中断：未检测到导入的字体', 'error');
   const rep=new Set([...Object.keys(state.glyphImages),...Object.keys(state.drawnGlyphs)]), col=Object.entries(state.perCharColors);
@@ -2134,8 +2162,29 @@ $('btnExportFont').addEventListener('click', async () => {
   $('btnExportFont').disabled=true; dom.exportModal.classList.add('show'); dom.exportProgressBar.style.width='0%';
   dom.exportProgressText.textContent='正在准备导出引擎...'; await yieldThread();
 
+  let baseFontBuffer = state.fontBuffer;
+  let nativeLayoutApplied = false;
+  if (hasLayoutAdjust) {
+    dom.exportProgressText.textContent='正在调用 iOS 原生字体引擎...'; await yieldThread();
+    try {
+      baseFontBuffer = await processFontWithNative({
+        base64: arrayBufferToBase64(state.fontBuffer),
+        size: state.fontSize,
+        weight: state.fontWeight,
+        letter: state.letterSpacing,
+        line: state.lineHeight,
+        rise: state.baselineOffset
+      });
+      nativeLayoutApplied = true;
+      toast('已使用 iOS 原生字体引擎处理排版参数', 'success');
+    } catch (e) {
+      console.warn(e);
+      toast('原生字体引擎不可用，已回退到兼容模式', 'info');
+    }
+  }
+
   let c=0, dn=0; const gDm={}, gPm={};
-  let maxp=0; const v=new DataView(state.fontBuffer); for(let i=0;i<v.getUint16(4,false);i++){const ro=12+i*16;if(String.fromCharCode(...new Uint8Array(state.fontBuffer,ro,4))==='maxp'){maxp=v.getUint32(ro+8,false);break;}}
+  let maxp=0; const v=new DataView(baseFontBuffer); for(let i=0;i<v.getUint16(4,false);i++){const ro=12+i*16;if(String.fromCharCode(...new Uint8Array(baseFontBuffer,ro,4))==='maxp'){maxp=v.getUint32(ro+8,false);break;}}
   const nG=v.getUint16(maxp+4,false);
 
   for (const ch of rep) {
@@ -2165,7 +2214,7 @@ $('btnExportFont').addEventListener('click', async () => {
   }
 
   dom.exportProgressText.textContent='正在写入排版参数...'; await yieldThread();
-  const adjust = hasLayoutAdjust ? buildExportAdjustments(state.fontBuffer) : { glyphMap: {}, tables: {} };
+  const adjust = hasLayoutAdjust && !nativeLayoutApplied ? buildExportAdjustments(state.fontBuffer) : { glyphMap: {}, tables: {} };
   if (hasLayoutAdjust) c += Object.keys(adjust.glyphMap).length + Object.keys(adjust.tables).length;
 
   dom.exportProgressText.textContent='正在对齐色彩参数...'; await yieldThread();
@@ -2173,8 +2222,8 @@ $('btnExportFont').addEventListener('click', async () => {
   if(Object.keys(gPm).length>0){
       // 传递包含调整参数的映射给构建函数
       inj['sbix']=buildSbixBinary(nG,gPm);
-      const nh=patchHmtx(state.fontBuffer,gPm,state.font.unitsPerEm||1000);
-      if(nh)inj['hmtx']=mergeHmtxGlyphOverrides(state.fontBuffer, inj['hmtx'], nh, gPm);
+      const nh=patchHmtx(baseFontBuffer,gPm,state.font.unitsPerEm||1000);
+      if(nh)inj['hmtx']=mergeHmtxGlyphOverrides(baseFontBuffer, inj['hmtx'], nh, gPm);
   }
   if(col.length>0||expGlo){
     const pc=[], ht={}, gp=(hx)=>{const u=hx.toUpperCase();if(ht[u]!==undefined)return ht[u];pc.push({r:parseInt(u.slice(1,3),16),g:parseInt(u.slice(3,5),16),b:parseInt(u.slice(5,7),16),a:255});ht[u]=pc.length-1;return pc.length-1;};
@@ -2188,7 +2237,7 @@ $('btnExportFont').addEventListener('click', async () => {
 
   dom.exportProgressText.innerHTML='进行系统安全容器封装...<br><span style="color:#10B981;font-weight:600;">保留物理级清晰度</span>'; await yieldThread();
   try {
-    let ob=state.fontBuffer.slice(0);
+    let ob=baseFontBuffer.slice(0);
     const glyfMap = {...adjust.glyphMap, ...gDm};
     if(Object.keys(glyfMap).length>0){const pt=fastPatchGlyf(ob,glyfMap);if(pt){inj['glyf']=pt.glyf;inj['loca']=pt.loca;inj['head']=pt.head;}else{toast('提示: 检测到不兼容底包，部分特性可能丢失','info');}}
     if(Object.keys(inj).length>0) ob=injectTablesSorted(ob,inj);
