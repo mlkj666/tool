@@ -1827,6 +1827,138 @@ function buildSbixBinary(nG, glyphInfoMap) {
   oDv.setUint16(0,1,false); oDv.setUint16(2,1,false); oDv.setUint32(4,1,false); oDv.setUint32(8,12,false); out.set(sb,12); return out;
 }
 
+async function buildVectorGlyphFromImageInfo(info, upem) {
+  const img = await loadImage(info.dataUrl);
+  const side = 72;
+  const canvas = document.createElement('canvas');
+  canvas.width = side;
+  canvas.height = side;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, side, side);
+  const baseScale = Math.min(side / img.width, side / img.height) * (info.scale || 1);
+  const w = Math.max(1, Math.round(img.width * baseScale));
+  const h = Math.max(1, Math.round(img.height * baseScale));
+  const dx = Math.round((side - w) / 2);
+  const dy = Math.round((side - h) / 2);
+  ctx.drawImage(img, dx, dy, w, h);
+  const pixels = ctx.getImageData(0, 0, side, side).data;
+  const filled = (x, y) => {
+    if (x < 0 || y < 0 || x >= side || y >= side) return false;
+    const i = (y * side + x) * 4;
+    return pixels[i + 3] > 64 && (pixels[i] + pixels[i + 1] + pixels[i + 2] < 735);
+  };
+
+  const edges = [];
+  const addEdge = (x1, y1, x2, y2) => edges.push([x1, y1, x2, y2]);
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      if (!filled(x, y)) continue;
+      if (!filled(x, y - 1)) addEdge(x, y, x + 1, y);
+      if (!filled(x + 1, y)) addEdge(x + 1, y, x + 1, y + 1);
+      if (!filled(x, y + 1)) addEdge(x + 1, y + 1, x, y + 1);
+      if (!filled(x - 1, y)) addEdge(x, y + 1, x, y);
+    }
+  }
+  if (!edges.length) return new Uint8Array(0);
+
+  const byStart = new Map();
+  for (const e of edges) {
+    const key = `${e[0]},${e[1]}`;
+    if (!byStart.has(key)) byStart.set(key, []);
+    byStart.get(key).push(e);
+  }
+
+  const contours = [];
+  const edgeKey = e => `${e[0]},${e[1]},${e[2]},${e[3]}`;
+  const used = new Set();
+  for (const first of edges) {
+    if (used.has(edgeKey(first))) continue;
+    const contour = [[first[0], first[1]]];
+    let current = first;
+    used.add(edgeKey(current));
+    let guard = 0;
+    while (guard++ < edges.length + 4) {
+      const endKey = `${current[2]},${current[3]}`;
+      contour.push([current[2], current[3]]);
+      if (current[2] === first[0] && current[3] === first[1]) break;
+      const nextList = byStart.get(endKey) || [];
+      const next = nextList.find(e => !used.has(edgeKey(e)));
+      if (!next) break;
+      current = next;
+      used.add(edgeKey(current));
+    }
+    if (contour.length >= 4) {
+      if (contour[0][0] === contour[contour.length - 1][0] && contour[0][1] === contour[contour.length - 1][1]) {
+        contour.pop();
+      }
+      const simplified = simplifyGridContour(contour);
+      if (simplified.length >= 3) contours.push(simplified);
+    }
+  }
+
+  contours.sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
+  const limited = contours.slice(0, 48);
+  const units = upem * 0.82 / side;
+  const xShift = upem * 0.09 + (info.xOffset || 0) * upem / 220;
+  const yShift = upem * 0.09 - (info.yOffset || 0) * upem / 220;
+  const points = [];
+  const endPts = [];
+  for (const contour of limited) {
+    for (const [x, y] of contour) {
+      points.push([
+        clampInt16(x * units + xShift),
+        clampInt16((side - y) * units + yShift)
+      ]);
+    }
+    endPts.push(points.length - 1);
+  }
+  if (!points.length || endPts.length > 255) return new Uint8Array(0);
+
+  let minX = 32767, minY = 32767, maxX = -32768, maxY = -32768;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const out = new Uint8Array(10 + endPts.length * 2 + 2 + points.length + points.length * 4);
+  const v = new DataView(out.buffer);
+  let p = 0;
+  v.setInt16(p, endPts.length, false); p += 2;
+  v.setInt16(p, minX, false); p += 2;
+  v.setInt16(p, minY, false); p += 2;
+  v.setInt16(p, maxX, false); p += 2;
+  v.setInt16(p, maxY, false); p += 2;
+  for (const end of endPts) { v.setUint16(p, end, false); p += 2; }
+  v.setUint16(p, 0, false); p += 2;
+  for (let i = 0; i < points.length; i++) out[p++] = 1;
+  let lastX = 0, lastY = 0;
+  for (const [x] of points) { v.setInt16(p, clampInt16(x - lastX), false); p += 2; lastX = x; }
+  for (const [, y] of points) { v.setInt16(p, clampInt16(y - lastY), false); p += 2; lastY = y; }
+  return out;
+}
+
+function simplifyGridContour(points) {
+  if (points.length <= 3) return points;
+  const out = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[(i - 1 + points.length) % points.length];
+    const b = points[i];
+    const c = points[(i + 1) % points.length];
+    const abx = b[0] - a[0], aby = b[1] - a[1];
+    const bcx = c[0] - b[0], bcy = c[1] - b[1];
+    if (abx * bcy - aby * bcx !== 0) out.push(b);
+  }
+  return out;
+}
+
+function polygonArea(points) {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  return area / 2;
+}
+
 function patchHmtx(fb, glyphInfoMap, upem) {
   const v=new DataView(fb); if (fb.byteLength < 12) return null;
   const nt=Math.min(v.getUint16(4,false), Math.floor((fb.byteLength - 12) / 16)); let hmO=0, hmL=0, hhO=0;
@@ -2203,14 +2335,20 @@ $('btnExportFont').addEventListener('click', async () => {
             dataUrl = await scaleImage(dataUrl, info.scale);
         }
         
-        // 存储包含数据和调整参数的对象
+        const vectorGlyph = await buildVectorGlyphFromImageInfo(info, state.font.unitsPerEm || 1000);
+        if (vectorGlyph.length > 0) {
+            gDm[gi] = vectorGlyph;
+        } else {
+            throw new Error('图片轮廓为空');
+        }
+
+        // 存储调整参数，用于同步 hmtx 字距
         gPm[gi] = {
             data: base64ToUint8Array(dataUrl.split(',')[1]),
             spacing: info.spacing,
             xOffset: info.xOffset,
             yOffset: info.yOffset
         };
-        gDm[gi]=new Uint8Array(0);
         c++;
     }catch(e){console.error(e);}
     dn++; dom.exportProgressBar.style.width=`${(dn/rep.size)*100}%`;
@@ -2223,8 +2361,6 @@ $('btnExportFont').addEventListener('click', async () => {
   dom.exportProgressText.textContent='正在对齐色彩参数...'; await yieldThread();
   const inj={...adjust.tables}; 
   if(Object.keys(gPm).length>0){
-      // 传递包含调整参数的映射给构建函数
-      inj['sbix']=buildSbixBinary(nG,gPm);
       const nh=patchHmtx(baseFontBuffer,gPm,state.font.unitsPerEm||1000);
       if(nh)inj['hmtx']=mergeHmtxGlyphOverrides(baseFontBuffer, inj['hmtx'], nh, gPm);
   }

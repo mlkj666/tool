@@ -398,34 +398,24 @@ private final class NativeTTFProcessor {
 
     let xMid = Double(readInt16(chunk, 2) + readInt16(chunk, 6)) / 2.0
     let yMid = Double(readInt16(chunk, 4) + readInt16(chunk, 8)) / 2.0
-    var start = 0
-    var boxes: [(start: Int, end: Int, cx: Double, cy: Double, limit: Double)] = []
-    for end in endPts {
-      var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
-      for i in start...end {
-        minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
-        minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
-      }
-      let width = max(1, maxX - minX)
-      let height = max(1, maxY - minY)
-      boxes.append((start, end, Double(minX + maxX) / 2.0, Double(minY + maxY) / 2.0, max(6.0, Double(min(width, height)) * 0.36)))
-      start = end + 1
-    }
-
     var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
-    for box in boxes {
-      let safeWeight = max(-box.limit, min(box.limit, Double(weightUnits)))
-      for i in box.start...box.end {
-        let vx = Double(xs[i]) - box.cx
-        let vy = Double(ys[i]) - box.cy
-        let len = max(1.0, sqrt(vx * vx + vy * vy))
-        let nx = vx / len
-        let ny = vy / len
-        xs[i] = clampInt16(Int(round(xMid + (Double(xs[i]) - xMid) * scale + nx * safeWeight)))
-        ys[i] = clampInt16(Int(round(yMid + (Double(ys[i]) - yMid) * scale + ny * safeWeight * 0.30 + Double(riseUnits))))
+    var contourStart = 0
+    for contourEnd in endPts {
+      let adjusted = offsetContour(
+        xs: xs,
+        ys: ys,
+        start: contourStart,
+        end: contourEnd,
+        requestedUnits: weightUnits
+      )
+      for i in contourStart...contourEnd {
+        let offset = adjusted[i - contourStart]
+        xs[i] = clampInt16(Int(round(xMid + (Double(xs[i]) - xMid) * scale + offset.x)))
+        ys[i] = clampInt16(Int(round(yMid + (Double(ys[i]) - yMid) * scale + offset.y + Double(riseUnits))))
         minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
         minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
       }
+      contourStart = contourEnd + 1
     }
 
     var out = Data()
@@ -565,6 +555,74 @@ private final class NativeTTFProcessor {
       writeUInt16(&out, p, UInt16(max(0, min(65535, width))))
     }
     return out
+  }
+
+  private static func offsetContour(xs: [Int], ys: [Int], start: Int, end: Int, requestedUnits: Int) -> [(x: Double, y: Double)] {
+    let count = end - start + 1
+    guard count >= 3, requestedUnits != 0 else {
+      return Array(repeating: (0, 0), count: max(0, count))
+    }
+
+    var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
+    for i in start...end {
+      minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
+      minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
+    }
+    let contourLimit = max(4.0, Double(min(maxX - minX, maxY - minY)) * 0.34)
+    let amount = max(-contourLimit, min(contourLimit, Double(requestedUnits)))
+    if abs(amount) < 0.01 {
+      return Array(repeating: (0, 0), count: count)
+    }
+
+    let area = signedArea(xs: xs, ys: ys, start: start, end: end)
+    let ccw = area > 0
+    var output: [(x: Double, y: Double)] = []
+    output.reserveCapacity(count)
+
+    for i in start...end {
+      let prev = i == start ? end : i - 1
+      let next = i == end ? start : i + 1
+      let n1 = outwardNormal(
+        dx: Double(xs[i] - xs[prev]),
+        dy: Double(ys[i] - ys[prev]),
+        ccw: ccw
+      )
+      let n2 = outwardNormal(
+        dx: Double(xs[next] - xs[i]),
+        dy: Double(ys[next] - ys[i]),
+        ccw: ccw
+      )
+      var nx = n1.x + n2.x
+      var ny = n1.y + n2.y
+      let length = sqrt(nx * nx + ny * ny)
+      if length < 0.001 {
+        nx = n2.x
+        ny = n2.y
+      } else {
+        nx /= length
+        ny /= length
+      }
+      output.append((nx * amount, ny * amount))
+    }
+    return output
+  }
+
+  private static func signedArea(xs: [Int], ys: [Int], start: Int, end: Int) -> Double {
+    guard end > start else { return 0 }
+    var area = 0.0
+    for i in start...end {
+      let next = i == end ? start : i + 1
+      area += Double(xs[i] * ys[next] - xs[next] * ys[i])
+    }
+    return area / 2.0
+  }
+
+  private static func outwardNormal(dx: Double, dy: Double, ccw: Bool) -> (x: Double, y: Double) {
+    let length = max(1.0, sqrt(dx * dx + dy * dy))
+    if ccw {
+      return (dy / length, -dx / length)
+    }
+    return (-dy / length, dx / length)
   }
 
   private static func patchHhea(_ hhea: Data, lineHeight: Double, upm: Int) -> Data {
