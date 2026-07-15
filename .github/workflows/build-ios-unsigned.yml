@@ -1,11 +1,15 @@
 name: Build unsigned iOS IPA
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-15
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -23,6 +27,11 @@ jobs:
           FLUTTER_STORAGE_BASE_URL: https://storage.flutter-io.cn
         run: flutter pub get
 
+      - name: Verify Flutter sources
+        run: |
+          flutter analyze
+          flutter test
+
       - name: Build iOS app without signing
         env:
           PUB_HOSTED_URL: https://pub.flutter-io.cn
@@ -38,5 +47,7 @@ jobs:
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-Tool-ipa
+          name: unsigned-Tool-ipa-${{ github.sha }}
           path: unsigned-Tool.ipa
+          if-no-files-found: error
+          retention-days: 14
