@@ -234,10 +234,10 @@ private final class NativeTTFProcessor {
     }
 
     let upm = max(1, Int(readUInt16(head.data, 18)))
-    let scale = max(0.2, min(4.0, params.size / 36.0))
-    let riseUnits = Int((params.rise / max(1, params.size)) * Double(upm))
+    let scale = max(0.2, min(4.0, 1.0 + params.size / 100.0))
+    let riseUnits = Int((params.rise / 100.0) * Double(upm) * 0.5)
     let weightUnits = Int((params.weight / 100.0) * Double(upm) * 0.16)
-    let spacingUnits = Int((params.letter / max(1, params.size)) * Double(upm))
+    let spacingUnits = Int((params.letter / 100.0) * Double(upm) * 0.5)
 
     if abs(scale - 1.0) > 0.001 || riseUnits != 0 || weightUnits != 0 {
       let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits)
@@ -252,12 +252,12 @@ private final class NativeTTFProcessor {
       tables["hmtx"]?.data = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, spacingUnits: spacingUnits)
     }
 
-    if abs(params.line - 1.4) > 0.01 {
+    if abs(params.line) > 0.01 {
       if let hhea = tables["hhea"] {
-        tables["hhea"]?.data = patchHhea(hhea.data, lineHeight: params.line, upm: upm)
+        tables["hhea"]?.data = patchHhea(hhea.data, lineHeightPercent: params.line, upm: upm)
       }
       if let os2 = tables["OS/2"] {
-        tables["OS/2"]?.data = patchOS2(os2.data, lineHeight: params.line, upm: upm)
+        tables["OS/2"]?.data = patchOS2(os2.data, lineHeightPercent: params.line, upm: upm)
       }
     }
 
@@ -625,25 +625,27 @@ private final class NativeTTFProcessor {
     return (-dy / length, dx / length)
   }
 
-  private static func patchHhea(_ hhea: Data, lineHeight: Double, upm: Int) -> Data {
+  private static func patchHhea(_ hhea: Data, lineHeightPercent: Double, upm: Int) -> Data {
     guard hhea.count >= 10 else { return hhea }
     var out = hhea
     let asc = Int(readInt16(out, 4))
     let desc = Int(readInt16(out, 6))
     let body = max(1, asc - desc)
-    let target = max(body, Int(round(Double(upm) * lineHeight)))
-    writeInt16(&out, 8, clampInt16(target - body))
+    let currentGap = Int(readInt16(out, 8))
+    let delta = Int(round(Double(max(body, upm)) * lineHeightPercent / 100.0))
+    writeInt16(&out, 8, clampInt16(currentGap + delta))
     return out
   }
 
-  private static func patchOS2(_ os2: Data, lineHeight: Double, upm: Int) -> Data {
+  private static func patchOS2(_ os2: Data, lineHeightPercent: Double, upm: Int) -> Data {
     guard os2.count >= 74 else { return os2 }
     var out = os2
     let asc = Int(readInt16(out, 68))
     let desc = Int(readInt16(out, 70))
     let body = max(1, asc - desc)
-    let target = max(body, Int(round(Double(upm) * lineHeight)))
-    writeInt16(&out, 72, clampInt16(target - body))
+    let currentGap = Int(readInt16(out, 72))
+    let delta = Int(round(Double(max(body, upm)) * lineHeightPercent / 100.0))
+    writeInt16(&out, 72, clampInt16(currentGap + delta))
     return out
   }
 
