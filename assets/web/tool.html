@@ -1966,7 +1966,7 @@ function transformSimpleGlyph(chunk, scale, riseUnits, weightUnits) {
   p += contours * 2;
   const instructionLength = src.getUint16(p, false); p += 2;
   if (p + instructionLength > chunk.length) return chunk;
-  const instructions = chunk.slice(p, p + instructionLength); p += instructionLength;
+  p += instructionLength;
 
   const flags = [];
   while (flags.length < pointCount && p < chunk.length) {
@@ -2040,7 +2040,8 @@ function transformSimpleGlyph(chunk, scale, riseUnits, weightUnits) {
     }
   }
 
-  const size = 10 + contours * 2 + 2 + instructionLength + pointCount + pointCount * 4;
+  const outputInstructionLength = 0;
+  const size = 10 + contours * 2 + 2 + outputInstructionLength + pointCount + pointCount * 4;
   const out = new Uint8Array(size);
   const ov = new DataView(out.buffer);
   ov.setInt16(0, contours, false);
@@ -2050,8 +2051,7 @@ function transformSimpleGlyph(chunk, scale, riseUnits, weightUnits) {
   ov.setInt16(8, clampInt16(maxY), false);
   let op = 10;
   for (let i = 0; i < contours; i++) { ov.setUint16(op, endPts[i], false); op += 2; }
-  ov.setUint16(op, instructionLength, false); op += 2;
-  out.set(instructions, op); op += instructionLength;
+  ov.setUint16(op, outputInstructionLength, false); op += 2;
   for (let i = 0; i < pointCount; i++) out[op++] = flags[i] & 1;
   let lastX = 0, lastY = 0;
   for (let i = 0; i < pointCount; i++) { ov.setInt16(op, clampInt16(xs[i] - lastX), false); op += 2; lastX = xs[i]; }
