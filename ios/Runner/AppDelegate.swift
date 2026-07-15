@@ -272,9 +272,20 @@ private final class NativeTTFProcessor {
       if let hhea = tables["hhea"] {
         tables["hhea"]?.data = patchHhea(hhea.data, lineHeightPercent: params.line)
       }
-      if let os2 = tables["OS/2"] {
-        tables["OS/2"]?.data = patchOS2(os2.data, lineHeightPercent: params.line)
+      if let vhea = tables["vhea"] {
+        tables["vhea"]?.data = patchHhea(vhea.data, lineHeightPercent: params.line)
       }
+    }
+
+    if let os2 = tables["OS/2"] {
+      var patched = os2.data
+      if abs(params.weight) > 0.01 {
+        patched = patchWeightClass(patched, weightPercent: params.weight)
+      }
+      if abs(params.line) > 0.01 {
+        patched = patchOS2(patched, lineHeightPercent: params.line)
+      }
+      tables["OS/2"]?.data = patched
     }
 
     return serializeTables(tables, sfntVersion: readUInt32(data, 0))
@@ -720,6 +731,14 @@ private final class NativeTTFProcessor {
       writeUInt16(&out, 74, UInt16(max(0, min(65535, Int(readUInt16(out, 74)) + delta))))
       writeUInt16(&out, 76, UInt16(max(0, min(65535, Int(readUInt16(out, 76)) + delta))))
     }
+    return out
+  }
+
+  private static func patchWeightClass(_ os2: Data, weightPercent: Double) -> Data {
+    guard os2.count >= 6 else { return os2 }
+    var out = os2
+    let value = max(1, min(1000, Int(round((1.0 + weightPercent / 100.0) * 400.0))))
+    writeUInt16(&out, 4, UInt16(value))
     return out
   }
 

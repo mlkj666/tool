@@ -367,6 +367,9 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
       <button class="btn" id="btnLoadImages">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span class="toolbar-label">导入图片</span>
       </button>
+      <button class="btn" id="btnRestoreFont" title="还原到刚导入的字体">
+         <span class="toolbar-label">还原</span>
+      </button>
     </div>
 
     <div class="header-right">
@@ -414,15 +417,15 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
       <div class="section">
         <div class="section-title">字体排版</div>
         <div class="val-row"><label>大小</label><span class="val" id="valSize">+0%</span></div>
-        <input type="range" id="rngSize" min="-80" max="120" value="0" step="1">
+        <input type="range" id="rngSize" min="-50" max="50" value="0" step="1">
         <div class="val-row"><label>笔画粗细</label><span class="val" id="valWeight">+0%</span></div>
-        <input type="range" id="rngWeight" min="-80" max="120" value="0" step="1">
+        <input type="range" id="rngWeight" min="-50" max="50" value="0" step="1">
         <div class="val-row"><label>字间距</label><span class="val" id="valSpacing">+0%</span></div>
-        <input type="range" id="rngSpacing" min="-80" max="120" value="0" step="1">
+        <input type="range" id="rngSpacing" min="-50" max="50" value="0" step="1">
         <div class="val-row"><label>上浮下沉</label><span class="val" id="valBaseline">+0%</span></div>
-        <input type="range" id="rngBaseline" min="-80" max="120" value="0" step="1">
+        <input type="range" id="rngBaseline" min="-50" max="50" value="0" step="1">
         <div class="val-row"><label>行距</label><span class="val" id="valLineHeight">+0%</span></div>
-        <input type="range" id="rngLineHeight" min="-80" max="120" value="0" step="1">
+        <input type="range" id="rngLineHeight" min="-50" max="50" value="0" step="1">
         <div class="val-row" style="margin-top:14px;"><label>作用范围</label></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:7px;">
           <button class="btn accent" id="btnTargetAll" type="button">全部字符</button>
@@ -433,14 +436,28 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
       </div>
 
       <div class="section">
+        <div class="section-title">字体改名</div>
+        <input type="text" id="renameFamily" placeholder="Family（必填）" style="width:100%;margin-top:7px;">
+        <input type="text" id="renameSubfamily" placeholder="Subfamily，例如 Regular" value="Regular" style="width:100%;margin-top:8px;">
+        <input type="text" id="renameFullName" placeholder="Full Name（留空自动生成）" style="width:100%;margin-top:8px;">
+        <input type="text" id="renamePostScript" placeholder="PostScript Name（留空自动生成）" style="width:100%;margin-top:8px;">
+        <label style="display:block;font-size:13px;margin-top:10px;"><input type="checkbox" id="renameAvoidConflict" checked> 自动规避字体名冲突</label>
+        <button class="btn full" id="btnApplyRename" style="margin-top:10px;">应用改名</button>
+      </div>
+
+      <div class="section">
         <div class="section-title">颜色设置</div>
         <div class="color-row">
           <span>全局颜色</span>
-          <input type="color" id="colorGlobal" value="#111827">
+          <input type="color" id="colorGlobal" value="#000000">
         </div>
         <div class="color-row" style="margin-top:16px;">
           <span>全部字符随机改色</span>
           <button class="btn small" id="btnRandomAllColors" style="background:#fff">随机生成</button>
+        </div>
+        <div class="color-row" style="margin-top:8px;">
+          <label for="randomColorPool">随机颜色池</label>
+          <input type="number" id="randomColorPool" min="1" max="256" step="1" value="24" style="width:76px;">
         </div>
         <button class="btn small danger full" id="btnClearRandomColors" style="display:none;margin-top:8px;">清除随机改色</button>
         <div class="color-row" style="margin-top:16px;">
@@ -553,6 +570,9 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
       <input type="range" id="drawSize" min="1" max="30" value="6" style="width:100px; margin:0;">
       <span id="valDrawSize" style="font-size:13px; font-weight:600; margin-right:auto">6px</span>
       <input type="color" id="drawColor" value="#111827">
+      <label style="font-size:13px;"><input type="checkbox" id="drawGrid"> 网格</label>
+      <button class="btn small" id="btnDrawUndo" title="撤销">撤销</button>
+      <button class="btn small" id="btnDrawRedo" title="重做">重做</button>
       <button class="btn small" id="btnEraser">橡皮擦</button>
       <button class="btn small danger" id="btnDrawClear">重置画板</button>
     </div>
@@ -590,7 +610,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
           <span class="adjust-control-label">大小</span>
           <span class="adjust-control-value" id="valAdjustScale">100%</span>
         </div>
-        <input type="range" id="rngAdjustScale" min="0.1" max="2.0" step="0.05" value="1.0">
+        <input type="range" id="rngAdjustScale" min="0.3" max="1.5" step="0.05" value="1.0">
       </div>
       <div class="adjust-control-group">
         <div class="adjust-control-header">
@@ -604,14 +624,17 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
           <span class="adjust-control-label">左右偏移</span>
           <span class="adjust-control-value" id="valAdjustXOffset">0px</span>
         </div>
-        <input type="range" id="rngAdjustXOffset" min="-100" max="100" step="1" value="0">
+        <input type="range" id="rngAdjustXOffset" min="-50" max="50" step="1" value="0">
       </div>
       <div class="adjust-control-group">
         <div class="adjust-control-header">
           <span class="adjust-control-label">上下偏移</span>
           <span class="adjust-control-value" id="valAdjustYOffset">0px</span>
         </div>
-        <input type="range" id="rngAdjustYOffset" min="-100" max="100" step="1" value="0">
+        <input type="range" id="rngAdjustYOffset" min="-50" max="50" step="1" value="0">
+      </div>
+      <div class="adjust-control-group">
+        <label><input type="checkbox" id="chkAdjustSmooth"> 平滑轮廓</label>
       </div>
     </div>
 
@@ -635,7 +658,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
   </div>
 </div>
 
-<input type="file" id="fileFont" accept=".ttf,.otf,.woff,.woff2" style="display:none">
+<input type="file" id="fileFont" accept=".ttf,.otf,.ttc" style="display:none">
 <input type="file" id="fileImages" accept="image/png,.png" multiple style="display:none">
 <input type="file" id="fileImagesPhoto" accept="image/png,image/*" multiple style="display:none">
 <input type="file" id="fileImagesCamera" accept="image/*" capture="environment" style="display:none">
@@ -644,13 +667,13 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 
 <script type="module">
 const state = {
-  font: null, originalFont: null, fontBuffer: null, originalFontBuffer: null, fontName: '', previewText: '爆闪 STUDIO 字体 修符工具',
+  font: null, originalFont: null, fontBuffer: null, originalFontBuffer: null, fontName: '', previewText: '',
   loadedFontFamily: null, originalLoadedFontFamily: null,
   currentFontFace: null, originalFontFace: null, currentFontUrl: null, originalFontUrl: null,
   previewFontSize: 46,
   fontSize: 0, fontWeight: 0, letterSpacing: 0, baselineOffset: 0, lineHeight: 0,
   targetAll: true, targetChars: '',
-  globalColor: '#111827', perCharColors: {}, randomGlyphColors: {}, glyphImages: {}, drawnGlyphs: {},
+  globalColor: '#000000', perCharColors: {}, randomGlyphColors: {}, glyphImages: {}, drawnGlyphs: {}, randomPool: 24,
   pendingAssignments: [], 
 };
 
@@ -715,8 +738,8 @@ function blobToBase64(blob) {
     });
 }
 
-async function downloadBlob(blob, filename) { 
-    const isFontFile = /\.(ttf|otf|woff2?)$/i.test(filename);
+async function downloadBlob(blob, filename) {
+    const isFontFile = /\.(ttf|otf|ttc)$/i.test(filename);
     if (isFontFile && window.FileSaver) {
         try {
             toast('正在打开 iOS 文件保存面板...', 'info');
@@ -901,13 +924,13 @@ function base64ToArrayBuffer(b64) {
 
 function resetTypographySettings() {
   Object.assign(state, {
-    previewText: '爆闪 STUDIO 字体 修符工具',
+    previewText: makeDefaultPreviewText(state.font, state.fontName),
     fontSize: 0,
     fontWeight: 0,
     letterSpacing: 0,
     baselineOffset: 0,
     lineHeight: 0,
-    globalColor: '#111827',
+    globalColor: '#000000',
     perCharColors: {},
     randomGlyphColors: {},
   });
@@ -916,7 +939,104 @@ function resetTypographySettings() {
   dom.colorGlobal.value = state.globalColor;
   updateCharColorList();
   updateRandomColorButton();
+  syncRenameFields();
 }
+
+function modifiedFontFilename() {
+  const original = state.fontName || 'font.ttf';
+  const match = original.match(/\.([^.]+)$/);
+  const ext = match && /^(ttf|otf|ttc)$/i.test(match[1]) ? match[1].toLowerCase() : 'ttf';
+  const base = original.replace(/\.(ttf|otf|ttc)$/i, '') || 'font';
+  return `${base}_modified.${ext}`;
+}
+
+function makeDefaultPreviewText(font, fileName) {
+  const names = font && font.names;
+  const localized = names && (names.fullName || names.fontFamily);
+  const name = localized && (localized.zh || localized.en || Object.values(localized)[0]);
+  const fallback = String(fileName || '字体').replace(/\.(ttf|otf|ttc)$/i, '') || '字体';
+  return `${name || fallback}字体预览\n1234567890\nABCDEFGHIJK`;
+}
+
+function localizedFontName(record) {
+  if (!record) return '';
+  return record.zh || record.en || Object.values(record)[0] || '';
+}
+
+function syncRenameFields() {
+  if (!state.font) return;
+  $('renameFamily').value = localizedFontName(state.font.names && state.font.names.fontFamily);
+  $('renameSubfamily').value = localizedFontName(state.font.names && state.font.names.fontSubfamily) || 'Regular';
+  $('renameFullName').value = localizedFontName(state.font.names && state.font.names.fullName);
+  $('renamePostScript').value = localizedFontName(state.font.names && state.font.names.postScriptName);
+}
+
+function utf16BE(value) {
+  const units = [];
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    units.push(code >>> 8, code & 0xff);
+  }
+  return new Uint8Array(units);
+}
+
+function buildNameTable(values) {
+  const records = [
+    [1, values.family], [2, values.subfamily], [3, values.unique],
+    [4, values.fullName], [6, values.postScript],
+    [16, values.family], [17, values.subfamily]
+  ].map(([nameID, value]) => ({nameID, bytes: utf16BE(value)}));
+  const headerLength = 6 + records.length * 12;
+  const storageLength = records.reduce((sum, record) => sum + record.bytes.length, 0);
+  const out = new Uint8Array(headerLength + storageLength);
+  const view = new DataView(out.buffer);
+  view.setUint16(0, 0, false);
+  view.setUint16(2, records.length, false);
+  view.setUint16(4, headerLength, false);
+  let storageOffset = 0;
+  records.forEach((record, index) => {
+    const p = 6 + index * 12;
+    view.setUint16(p, 3, false);
+    view.setUint16(p + 2, 1, false);
+    view.setUint16(p + 4, 0x0409, false);
+    view.setUint16(p + 6, record.nameID, false);
+    view.setUint16(p + 8, record.bytes.length, false);
+    view.setUint16(p + 10, storageOffset, false);
+    out.set(record.bytes, headerLength + storageOffset);
+    storageOffset += record.bytes.length;
+  });
+  return out;
+}
+
+$('btnApplyRename').addEventListener('click', async () => {
+  if (!state.font || !state.fontBuffer) return toast('请先导入字体', 'error');
+  const family = $('renameFamily').value.trim();
+  const subfamily = $('renameSubfamily').value.trim() || 'Regular';
+  if (!family) return toast('Family 名称不能为空', 'error');
+  if (!/^[A-Za-z0-9 -]+$/.test(subfamily)) return toast('Subfamily 只能包含英文字母、数字、空格和连字符', 'error');
+  const typedPostScript = $('renamePostScript').value.trim();
+  const generatedBase = `${family}-${subfamily}`.replace(/\s+/g, '-').replace(/[^A-Za-z0-9-]/g, '') || 'Font-Regular';
+  let postScript = (typedPostScript || generatedBase).replace(/[^A-Za-z0-9-]/g, '');
+  if (!postScript) postScript = 'Font-Regular';
+  if (!typedPostScript && $('renameAvoidConflict').checked) {
+    postScript += '-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+  }
+  const fullName = $('renameFullName').value.trim() || `${family} ${subfamily}`.trim();
+  const unique = `${postScript};${Date.now()}`;
+  try {
+    state.fontBuffer = injectTablesSorted(state.fontBuffer.slice(0), {
+      name: buildNameTable({family, subfamily, fullName, postScript, unique})
+    });
+    state.font = opentype.parse(state.fontBuffer);
+    await loadAndRegisterFont(state.fontBuffer, 'current');
+    $('renamePostScript').value = postScript;
+    $('renameFullName').value = fullName;
+    renderPreview();
+    toast('字体名称已写入 name 表', 'success');
+  } catch (error) {
+    toast('改名失败: ' + error.message, 'error');
+  }
+});
 
 function formatPercentDelta(v) {
   const n = Math.round(Number(v) || 0);
@@ -992,7 +1112,7 @@ async function loadAndRegisterFont(buffer, target = 'current') {
 dom.btnExport.addEventListener('click', () => {
   const config = { 
       version: 1, fontName: state.fontName, 
-      settings: { fontSize: state.fontSize, fontWeight: state.fontWeight, letterSpacing: state.letterSpacing, baselineOffset: state.baselineOffset, lineHeight: state.lineHeight, globalColor: state.globalColor }, 
+      settings: { fontSize: state.fontSize, fontWeight: state.fontWeight, letterSpacing: state.letterSpacing, baselineOffset: state.baselineOffset, lineHeight: state.lineHeight, globalColor: state.globalColor, randomPool: state.randomPool, targetAll: state.targetAll, targetChars: state.targetChars },
       perCharColors: state.perCharColors, randomGlyphColors: state.randomGlyphColors, glyphImages: state.glyphImages, drawnGlyphs: state.drawnGlyphs, previewText: state.previewText
   };
   if (state.fontBuffer) config.fontBufferB64 = arrayBufferToBase64(state.fontBuffer);
@@ -1007,7 +1127,9 @@ dom.fileConfig.addEventListener('change', async e => {
     if (config.settings) { 
         Object.assign(state, config.settings); 
         syncLayoutControls();
-        dom.colorGlobal.value = state.globalColor; 
+        dom.colorGlobal.value = state.globalColor;
+        $('randomColorPool').value = state.randomPool || 24;
+        syncTargetScope();
     }
     if (config.perCharColors) state.perCharColors = config.perCharColors; 
     if (config.randomGlyphColors) state.randomGlyphColors = config.randomGlyphColors;
@@ -1022,6 +1144,7 @@ dom.fileConfig.addEventListener('change', async e => {
         state.fontName = config.fontName || ''; 
         await loadAndRegisterFont(state.originalFontBuffer, 'original');
         await loadAndRegisterFont(state.fontBuffer, 'current');
+        syncRenameFields();
     }
     updateGlyphList(); updateCharColorList(); updateRandomColorButton(); renderPreview();
     toast('配置读取成功', 'success');
@@ -1049,6 +1172,25 @@ $('fileFont').addEventListener('change', async e => {
     toast(`已导入字体: ${file.name}`, 'success'); renderPreview();
   } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
   e.target.value = '';
+});
+
+$('btnRestoreFont').addEventListener('click', async () => {
+  if (!state.originalFontBuffer) return toast('请先导入字体', 'error');
+  try {
+    state.fontBuffer = state.originalFontBuffer.slice(0);
+    state.font = opentype.parse(state.fontBuffer);
+    await loadAndRegisterFont(state.fontBuffer, 'current');
+    state.glyphImages = {};
+    state.drawnGlyphs = {};
+    state.pendingAssignments = [];
+    resetTypographySettings();
+    updateGlyphList();
+    updatePendingAssignments();
+    renderPreview();
+    toast('已还原到刚导入的原始字体', 'success');
+  } catch (err) {
+    toast('还原失败: ' + err.message, 'error');
+  }
 });
 
 function openNativeImagePicker(source = 'photo') {
@@ -1098,7 +1240,7 @@ dom.canvasWrap.addEventListener('drop', async e => {
   e.preventDefault(); 
   const files = [...e.dataTransfer.files];
   const pngFiles = files.filter(f => f.name.match(/\.png$/i));
-  const fontFiles = files.filter(f => f.name.match(/\.(ttf|otf|woff2?)$/i));
+  const fontFiles = files.filter(f => f.name.match(/\.(ttf|otf|ttc)$/i));
   const zipFiles = files.filter(f => f.name.match(/\.zip$/i));
 
   if (fontFiles.length) { 
@@ -1140,13 +1282,16 @@ dom.canvasWrap.addEventListener('drop', async e => {
 
 async function processImageFiles(files) {
   for (const file of files) {
-    const dataUrl = await blobToDataUrl(file); const img = await loadImage(dataUrl);
+    const sourceUrl = await blobToDataUrl(file);
+    const sourceImage = await loadImage(sourceUrl);
+    const dataUrl = await resizeImageDataUrl(sourceImage, 512);
+    const img = await loadImage(dataUrl);
     const baseName = file.name.replace(/\.png$/i, ''); const char = detectCharFromFilename(baseName);
     if (char) { 
         // 初始化时设置默认调整参数
         state.glyphImages[char] = { 
             dataUrl, width: img.width, height: img.height, source: 'image',
-            scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0
+            scale: 0.9, spacing: 1.0, xOffset: 0, yOffset: 0, smooth: false, isHandDrawn: false
         }; 
         imageCache[dataUrl] = img; 
     } 
@@ -1154,6 +1299,17 @@ async function processImageFiles(files) {
   }
   updateGlyphList(); updatePendingAssignments(); renderPreview();
   if (state.pendingAssignments.length) toast(`有 ${state.pendingAssignments.length} 张图片需要您输入字符进行绑定`);
+}
+
+async function resizeImageDataUrl(image, maxSide) {
+  const largest = Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height);
+  if (largest <= maxSide) return image.src;
+  const ratio = maxSide / largest;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * ratio));
+  canvas.height = Math.max(1, Math.round(image.height * ratio));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/png');
 }
 
 window.receiveNativeImages = async function(items) {
@@ -1206,7 +1362,7 @@ $('btnApplyPending').addEventListener('click', () => {
       // 初始化时设置默认调整参数
       state.glyphImages[ch] = { 
           dataUrl: p.dataUrl, width: p.width, height: p.height, source: 'image',
-          scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0
+          scale: 0.9, spacing: 1.0, xOffset: 0, yOffset: 0, smooth: false, isHandDrawn: false
       };
       const preImg = new Image(); preImg.onload = () => { imageCache[p.dataUrl] = preImg; }; preImg.src = p.dataUrl;
     } else { remaining.push(state.pendingAssignments[idx]); }
@@ -1228,7 +1384,8 @@ function openAdjustModal(char) {
       scale: info.scale || 1.0,
       spacing: info.spacing || 1.0,
       xOffset: info.xOffset || 0,
-      yOffset: info.yOffset || 0
+      yOffset: info.yOffset || 0,
+      smooth: Boolean(info.smooth)
     };
 
     dom.adjustCharInput.value = char;
@@ -1246,6 +1403,7 @@ function openAdjustModal(char) {
     
     dom.rngAdjustYOffset.value = info.yOffset || 0;
     dom.valAdjustYOffset.textContent = (info.yOffset || 0) + 'px';
+    $('chkAdjustSmooth').checked = Boolean(info.smooth);
     updateAdjustPreviewImage();
 
     dom.adjustModal.classList.add('show');
@@ -1259,6 +1417,7 @@ function closeAdjustModal(restore = true) {
         info.spacing = adjustOriginalState.spacing;
         info.xOffset = adjustOriginalState.xOffset;
         info.yOffset = adjustOriginalState.yOffset;
+        info.smooth = adjustOriginalState.smooth;
         schedulePreviewRender(true);
       }
     }
@@ -1300,6 +1459,7 @@ function updatePreviewWithAdjustments() {
     info.spacing = parseFloat(dom.rngAdjustSpacing.value);
     info.xOffset = parseInt(dom.rngAdjustXOffset.value);
     info.yOffset = parseInt(dom.rngAdjustYOffset.value);
+    info.smooth = $('chkAdjustSmooth').checked;
     
     updateAdjustPreviewImage();
     schedulePreviewRender();
@@ -1314,6 +1474,7 @@ function updateAdjustPreviewImage() {
 }
 
 dom.btnAdjustCancel.addEventListener('click', closeAdjustModal);
+$('chkAdjustSmooth').addEventListener('change', updatePreviewWithAdjustments);
 dom.btnAdjustApply.addEventListener('click', () => {
     const charsStr = dom.adjustCharInput.value.trim();
     if (!charsStr) return toast('请输入要应用调整的字符', 'error');
@@ -1322,6 +1483,7 @@ dom.btnAdjustApply.addEventListener('click', () => {
     const spacing = parseFloat(dom.rngAdjustSpacing.value);
     const xOffset = parseInt(dom.rngAdjustXOffset.value);
     const yOffset = parseInt(dom.rngAdjustYOffset.value);
+    const smooth = $('chkAdjustSmooth').checked;
 
     let appliedCount = 0;
     for (const char of charsStr) {
@@ -1331,6 +1493,7 @@ dom.btnAdjustApply.addEventListener('click', () => {
             info.spacing = spacing;
             info.xOffset = xOffset;
             info.yOffset = yOffset;
+            info.smooth = smooth;
             appliedCount++;
         }
     }
@@ -1453,7 +1616,7 @@ function colorForChar(ch) {
     const gi = state.font.charToGlyphIndex(ch);
     if (gi > 0 && state.randomGlyphColors[gi]) return state.randomGlyphColors[gi];
   }
-  return state.globalColor || '#111827';
+  return state.globalColor || '#000000';
 }
 
 function updateRandomColorButton() {
@@ -1466,12 +1629,20 @@ dom.btnRandomAllColors.addEventListener('click', () => {
   if (!state.font || !state.fontBuffer) return toast('请先导入字体', 'error');
   const n = readMaxGlyphCount(state.fontBuffer) || state.font.glyphs?.length || 0;
   if (!n || n < 2) return toast('无法读取字体字形数量', 'error');
+  const poolSize = Math.max(1, Math.min(256, parseInt($('randomColorPool').value, 10) || 24));
+  state.randomPool = poolSize;
+  const pool = Array.from({length: poolSize}, randomColorHex);
   const colors = {};
-  for (let gi = 1; gi < n; gi++) colors[gi] = randomColorHex();
+  for (let gi = 1; gi < n; gi++) colors[gi] = pool[Math.floor(Math.random() * pool.length)];
   state.randomGlyphColors = colors;
   updateRandomColorButton();
   renderPreview();
-  toast(`已为 ${n - 1} 个字形生成随机颜色`, 'success');
+  toast(`已用 ${poolSize} 色随机池为 ${n - 1} 个字形改色`, 'success');
+});
+$('randomColorPool').addEventListener('change', () => {
+  const value = Math.max(1, Math.min(256, parseInt($('randomColorPool').value, 10) || 24));
+  $('randomColorPool').value = value;
+  state.randomPool = value;
 });
 
 dom.btnClearRandomColors.addEventListener('click', () => {
@@ -1794,6 +1965,9 @@ function initDrawCanvas() {
     dCtx.scale(ratio, ratio);
     dCtx.fillStyle = '#ffffff';
     dCtx.fillRect(0, 0, 400, 400);
+    drawUndoStack = [];
+    drawRedoStack = [];
+    updateDrawHistoryButtons();
 }
 
 $('btnOpenDraw').addEventListener('click', () => { dom.drawModal.classList.add('show'); initDrawCanvas(); });
@@ -1801,11 +1975,43 @@ $('btnDrawClose').addEventListener('click', () => { dom.drawModal.classList.remo
 dom.drawModal.addEventListener('click', e => { if (e.target === dom.drawModal) dom.drawModal.classList.remove('show'); });
 $('drawSize').addEventListener('input', () => { dom.valDrawSize.textContent = $('drawSize').value + 'px'; });
 let drawIsEraser = false;
+let drawUndoStack = [];
+let drawRedoStack = [];
+function captureDrawState() { return dom.drawCtx.getImageData(0, 0, dom.drawCanvas.width, dom.drawCanvas.height); }
+function restoreDrawState(snapshot) { dom.drawCtx.putImageData(snapshot, 0, 0); }
+function updateDrawHistoryButtons() {
+  $('btnDrawUndo').disabled = drawUndoStack.length === 0;
+  $('btnDrawRedo').disabled = drawRedoStack.length === 0;
+}
 $('btnEraser').addEventListener('click', () => { drawIsEraser = !drawIsEraser; $('btnEraser').style.background = drawIsEraser ? 'var(--danger)' : ''; $('btnEraser').style.color = drawIsEraser ? '#fff' : 'var(--text-main)'; });
-$('btnDrawClear').addEventListener('click', () => { initDrawCanvas(); });
+$('drawGrid').addEventListener('change', () => {
+  dom.drawCanvas.style.backgroundImage = $('drawGrid').checked
+    ? 'linear-gradient(#d1d5db 1px, transparent 1px),linear-gradient(90deg,#d1d5db 1px,transparent 1px)'
+    : 'none';
+  dom.drawCanvas.style.backgroundSize = '25px 25px';
+});
+$('btnDrawUndo').addEventListener('click', () => {
+  if (!drawUndoStack.length) return;
+  drawRedoStack.push(captureDrawState());
+  restoreDrawState(drawUndoStack.pop());
+  updateDrawHistoryButtons();
+});
+$('btnDrawRedo').addEventListener('click', () => {
+  if (!drawRedoStack.length) return;
+  drawUndoStack.push(captureDrawState());
+  restoreDrawState(drawRedoStack.pop());
+  updateDrawHistoryButtons();
+});
+$('btnDrawClear').addEventListener('click', () => {
+  drawUndoStack.push(captureDrawState());
+  drawRedoStack = [];
+  dom.drawCtx.fillStyle = '#ffffff';
+  dom.drawCtx.fillRect(0, 0, dom.drawCanvas.width, dom.drawCanvas.height);
+  updateDrawHistoryButtons();
+});
 const getDrawPos = (e) => { const rect = dom.drawCanvas.getBoundingClientRect(); return { x: (e.clientX - rect.left) * (400 / rect.width), y: (e.clientY - rect.top) * (400 / rect.height) }; };
 const attachDrawEvents = (start, move, end) => {
-  dom.drawCanvas.addEventListener(start, e => { if(e.touches)e.preventDefault(); state.isDrawing = true; const pos = getDrawPos(e.touches?e.touches[0]:e); dom.drawCtx.beginPath(); dom.drawCtx.moveTo(pos.x, pos.y); dom.drawCtx.lineCap='round'; dom.drawCtx.lineJoin='round'; dom.drawCtx.lineWidth=$('drawSize').value; dom.drawCtx.strokeStyle=drawIsEraser?'#ffffff':$('drawColor').value; });
+  dom.drawCanvas.addEventListener(start, e => { if(e.touches)e.preventDefault(); drawUndoStack.push(captureDrawState()); if(drawUndoStack.length>30)drawUndoStack.shift(); drawRedoStack=[]; updateDrawHistoryButtons(); state.isDrawing = true; const pos = getDrawPos(e.touches?e.touches[0]:e); dom.drawCtx.beginPath(); dom.drawCtx.moveTo(pos.x, pos.y); dom.drawCtx.lineCap='round'; dom.drawCtx.lineJoin='round'; dom.drawCtx.lineWidth=$('drawSize').value; dom.drawCtx.strokeStyle=drawIsEraser?'#ffffff':$('drawColor').value; });
   dom.drawCanvas.addEventListener(move, e => { if(e.touches)e.preventDefault(); if(!state.isDrawing)return; const pos = getDrawPos(e.touches?e.touches[0]:e); dom.drawCtx.lineTo(pos.x, pos.y); dom.drawCtx.stroke(); dom.drawCtx.beginPath(); dom.drawCtx.moveTo(pos.x, pos.y); });
   dom.drawCanvas.addEventListener(end, () => state.isDrawing = false);
 };
@@ -1818,7 +2024,7 @@ $('btnDrawApply').addEventListener('click', () => {
   // 初始化时设置默认调整参数
   state.drawnGlyphs[[...ch][0]] = { 
       dataUrl: dUrl, 
-      scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0 
+      scale: 1.0, spacing: 1.0, xOffset: 0, yOffset: 0, smooth: false, isHandDrawn: true
   };
   const dImg = new Image(); dImg.onload = () => imageCache[dUrl] = dImg; dImg.src = dUrl;
   updateGlyphList(); renderPreview(); toast('手绘文字保存成功', 'success'); dom.drawModal.classList.remove('show');
@@ -2003,10 +2209,20 @@ async function buildVectorGlyphFromImageInfo(info, upem) {
   const dy = Math.round((side - h) / 2);
   ctx.drawImage(img, dx, dy, w, h);
   const pixels = ctx.getImageData(0, 0, side, side).data;
+  let mask = new Uint8Array(side * side);
+  for (let y = 0; y < side; y++) {
+    for (let x = 0; x < side; x++) {
+      const i = (y * side + x) * 4;
+      mask[y * side + x] = pixels[i + 3] > 64 && (pixels[i] + pixels[i + 1] + pixels[i + 2] < 735) ? 1 : 0;
+    }
+  }
+  if (info.smooth) {
+    const radius = Math.max(1, Math.round(Math.max(img.width, img.height) / 256));
+    mask = smoothMask(mask, side, side, radius, 2);
+  }
   const filled = (x, y) => {
     if (x < 0 || y < 0 || x >= side || y >= side) return false;
-    const i = (y * side + x) * 4;
-    return pixels[i + 3] > 64 && (pixels[i] + pixels[i + 1] + pixels[i + 2] < 735);
+    return mask[y * side + x] !== 0;
   };
 
   const edges = [];
@@ -2060,8 +2276,8 @@ async function buildVectorGlyphFromImageInfo(info, upem) {
   contours.sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)));
   const limited = contours.slice(0, 48);
   const units = upem * 0.82 / side;
-  const xShift = upem * 0.09 + (info.xOffset || 0) * upem / 220;
-  const yShift = upem * 0.09 - (info.yOffset || 0) * upem / 220;
+  const xShift = upem * 0.09 + (info.xOffset || 0) * upem / 100;
+  const yShift = upem * 0.09 - (info.yOffset || 0) * upem / 100;
   const points = [];
   const endPts = [];
   for (const contour of limited) {
@@ -2095,6 +2311,29 @@ async function buildVectorGlyphFromImageInfo(info, upem) {
   for (const [x] of points) { v.setInt16(p, clampInt16(x - lastX), false); p += 2; lastX = x; }
   for (const [, y] of points) { v.setInt16(p, clampInt16(y - lastY), false); p += 2; lastY = y; }
   return out;
+}
+
+function smoothMask(input, width, height, radius, passes) {
+  let source = input;
+  for (let pass = 0; pass < passes; pass++) {
+    const output = new Uint8Array(source.length);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        let filled = 0, count = 0;
+        for (let oy = -radius; oy <= radius; oy++) {
+          for (let ox = -radius; ox <= radius; ox++) {
+            const px = x + ox, py = y + oy;
+            if (px < 0 || py < 0 || px >= width || py >= height) continue;
+            filled += source[py * width + px];
+            count++;
+          }
+        }
+        output[y * width + x] = filled * 2 >= count ? 1 : 0;
+      }
+    }
+    source = output;
+  }
+  return source;
 }
 
 function simplifyGridContour(points) {
@@ -2503,7 +2742,7 @@ $('btnExportFont').addEventListener('click', async () => {
   const randomCol = Object.entries(state.randomGlyphColors || {});
   const expGlo=state.globalColor.toUpperCase()!=='#111827'&&state.globalColor.toUpperCase()!=='#000000';
   const hasLayoutAdjust = hasPendingLayoutAdjust();
-  if(rep.size===0&&col.length===0&&randomCol.length===0&&!expGlo&&!hasLayoutAdjust){ downloadBlob(new Blob([state.fontBuffer.slice(0)],{type:'font/ttf'}),(state.fontName||'font')+'.ttf'); toast('由于您未进行修改，已导出原字体', 'success'); return; }
+  if(rep.size===0&&col.length===0&&randomCol.length===0&&!expGlo&&!hasLayoutAdjust){ downloadBlob(new Blob([state.fontBuffer.slice(0)],{type:'font/ttf'}),modifiedFontFilename()); toast('由于您未进行修改，已导出当前字体', 'success'); return; }
 
   $('btnExportFont').disabled=true; dom.exportModal.classList.add('show'); dom.exportProgressBar.style.width='0%';
   dom.exportProgressText.textContent='正在准备导出引擎...'; await yieldThread();
@@ -2588,7 +2827,7 @@ $('btnExportFont').addEventListener('click', async () => {
     const glyfMap = {...adjust.glyphMap, ...gDm};
     if(Object.keys(glyfMap).length>0){const pt=fastPatchGlyf(ob,glyfMap);if(pt){inj['glyf']=pt.glyf;inj['loca']=pt.loca;inj['head']=pt.head;}else{toast('提示: 检测到不兼容底包，部分特性可能丢失','info');}}
     if(Object.keys(inj).length>0) ob=injectTablesSorted(ob,inj);
-    downloadBlob(new Blob([ob],{type:'font/ttf'}),(state.fontName||'font').replace(/\.(ttf|otf|woff2?)$/i,'')+'-MOD.ttf');
+    downloadBlob(new Blob([ob],{type:'font/ttf'}),modifiedFontFilename());
     toast(`导出成功！共修改了 ${c} 处字符。`, 'success');
   } catch(e) { toast(`底层编译失败: ${e.message}`, 'error'); }
   dom.exportModal.classList.remove('show'); $('btnExportFont').disabled=false;
