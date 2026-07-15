@@ -2179,7 +2179,10 @@ $('btnExportFont').addEventListener('click', async () => {
       toast('已使用 iOS 原生字体引擎处理排版参数', 'success');
     } catch (e) {
       console.warn(e);
-      toast('原生字体引擎不可用，已回退到兼容模式', 'info');
+      dom.exportModal.classList.remove('show');
+      $('btnExportFont').disabled=false;
+      toast('原生字体引擎处理失败，已停止导出以避免字体变形。请换 TTF 字体或把原字体发给我继续适配。', 'error');
+      return;
     }
   }
 
@@ -2214,7 +2217,7 @@ $('btnExportFont').addEventListener('click', async () => {
   }
 
   dom.exportProgressText.textContent='正在写入排版参数...'; await yieldThread();
-  const adjust = hasLayoutAdjust && !nativeLayoutApplied ? buildExportAdjustments(state.fontBuffer) : { glyphMap: {}, tables: {} };
+  const adjust = { glyphMap: {}, tables: {} };
   if (hasLayoutAdjust) c += Object.keys(adjust.glyphMap).length + Object.keys(adjust.tables).length;
 
   dom.exportProgressText.textContent='正在对齐色彩参数...'; await yieldThread();

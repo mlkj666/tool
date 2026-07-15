@@ -340,7 +340,10 @@ private final class NativeTTFProcessor {
   private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, weightUnits: Int) -> Data? {
     guard chunk.count >= 10 else { return nil }
     let contours = Int(readInt16(chunk, 0))
-    if contours <= 0 { return nil }
+    if contours < 0 {
+      return transformCompositeGlyph(chunk, scale: scale, riseUnits: riseUnits)
+    }
+    if contours == 0 { return nil }
     var p = 10
     guard p + contours * 2 + 2 <= chunk.count else { return nil }
     var endPts: [Int] = []
@@ -443,6 +446,112 @@ private final class NativeTTFProcessor {
       appendInt16(&out, Int16(clampInt16(value - lastY)))
       lastY = value
     }
+    return out
+  }
+
+  private static func transformCompositeGlyph(_ chunk: Data, scale: Double, riseUnits: Int) -> Data? {
+    guard chunk.count >= 14 else { return nil }
+    let arg1And2AreWords: UInt16 = 0x0001
+    let argsAreXYValues: UInt16 = 0x0002
+    let weHaveScale: UInt16 = 0x0008
+    let moreComponents: UInt16 = 0x0020
+    let weHaveXYScale: UInt16 = 0x0040
+    let weHaveTwoByTwo: UInt16 = 0x0080
+    let weHaveInstructions: UInt16 = 0x0100
+
+    let oldMinX = Int(readInt16(chunk, 2))
+    let oldMinY = Int(readInt16(chunk, 4))
+    let oldMaxX = Int(readInt16(chunk, 6))
+    let oldMaxY = Int(readInt16(chunk, 8))
+    let xMid = Double(oldMinX + oldMaxX) / 2.0
+    let yMid = Double(oldMinY + oldMaxY) / 2.0
+    let newMinX = clampInt16(Int(round(xMid + (Double(oldMinX) - xMid) * scale)))
+    let newMaxX = clampInt16(Int(round(xMid + (Double(oldMaxX) - xMid) * scale)))
+    let newMinY = clampInt16(Int(round(yMid + (Double(oldMinY) - yMid) * scale + Double(riseUnits))))
+    let newMaxY = clampInt16(Int(round(yMid + (Double(oldMaxY) - yMid) * scale + Double(riseUnits))))
+
+    var out = Data()
+    appendInt16(&out, -1)
+    appendInt16(&out, Int16(min(newMinX, newMaxX)))
+    appendInt16(&out, Int16(min(newMinY, newMaxY)))
+    appendInt16(&out, Int16(max(newMinX, newMaxX)))
+    appendInt16(&out, Int16(max(newMinY, newMaxY)))
+
+    var p = 10
+    var flags: UInt16 = moreComponents
+    repeat {
+      guard p + 4 <= chunk.count else { return nil }
+      flags = readUInt16(chunk, p)
+      let glyphIndex = readUInt16(chunk, p + 2)
+      p += 4
+      let hasWordArgs = flags & arg1And2AreWords != 0
+      let hasXYArgs = flags & argsAreXYValues != 0
+      var arg1 = 0
+      var arg2 = 0
+      if hasWordArgs {
+        guard p + 4 <= chunk.count else { return nil }
+        arg1 = Int(readInt16(chunk, p))
+        arg2 = Int(readInt16(chunk, p + 2))
+        p += 4
+      } else {
+        guard p + 2 <= chunk.count else { return nil }
+        arg1 = Int(Int8(bitPattern: chunk[p]))
+        arg2 = Int(Int8(bitPattern: chunk[p + 1]))
+        p += 2
+      }
+
+      var matrixValues: [Int16] = []
+      if flags & weHaveScale != 0 {
+        guard p + 2 <= chunk.count else { return nil }
+        let value = Int(readInt16(chunk, p))
+        matrixValues = [Int16(clampF2Dot14(Double(value) * scale))]
+        p += 2
+      } else if flags & weHaveXYScale != 0 {
+        guard p + 4 <= chunk.count else { return nil }
+        let xScale = Int(readInt16(chunk, p))
+        let yScale = Int(readInt16(chunk, p + 2))
+        matrixValues = [
+          Int16(clampF2Dot14(Double(xScale) * scale)),
+          Int16(clampF2Dot14(Double(yScale) * scale))
+        ]
+        p += 4
+      } else if flags & weHaveTwoByTwo != 0 {
+        guard p + 8 <= chunk.count else { return nil }
+        let a = Int(readInt16(chunk, p))
+        let b = Int(readInt16(chunk, p + 2))
+        let c = Int(readInt16(chunk, p + 4))
+        let d = Int(readInt16(chunk, p + 6))
+        matrixValues = [
+          Int16(clampF2Dot14(Double(a) * scale)),
+          Int16(clampF2Dot14(Double(b) * scale)),
+          Int16(clampF2Dot14(Double(c) * scale)),
+          Int16(clampF2Dot14(Double(d) * scale))
+        ]
+        p += 8
+      } else if abs(scale - 1.0) > 0.001 {
+        flags |= weHaveScale
+        matrixValues = [Int16(clampF2Dot14(16384.0 * scale))]
+      }
+
+      if hasXYArgs {
+        arg1 = Int(round(Double(arg1) * scale))
+        arg2 = Int(round(Double(arg2) * scale)) + riseUnits
+      }
+
+      flags &= ~weHaveInstructions
+      appendUInt16(&out, flags)
+      appendUInt16(&out, glyphIndex)
+      if flags & arg1And2AreWords != 0 {
+        appendInt16(&out, Int16(clampInt16(arg1)))
+        appendInt16(&out, Int16(clampInt16(arg2)))
+      } else {
+        out.append(UInt8(bitPattern: Int8(max(-128, min(127, arg1)))))
+        out.append(UInt8(bitPattern: Int8(max(-128, min(127, arg2)))))
+      }
+      for value in matrixValues { appendInt16(&out, value) }
+    } while flags & moreComponents != 0
+
+    if out.count % 2 != 0 { out.append(0) }
     return out
   }
 
@@ -597,5 +706,9 @@ private final class NativeTTFProcessor {
 
   private static func clampInt16(_ value: Int) -> Int {
     max(-32768, min(32767, value))
+  }
+
+  private static func clampF2Dot14(_ value: Double) -> Int {
+    max(-32768, min(32767, Int(round(value))))
   }
 }
