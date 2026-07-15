@@ -244,36 +244,36 @@ private final class NativeTTFProcessor {
     }
 
     let upm = max(1, Int(readUInt16(head.data, 18)))
-    let scale = max(0.2, min(4.0, 1.0 + params.size / 100.0))
-    let riseUnits = Int((params.rise / 100.0) * Double(upm) * 0.5)
-    let weightUnits = Int((params.weight / 100.0) * Double(upm) * 0.16)
-    let spacingUnits = Int((params.letter / 100.0) * Double(upm) * 0.5)
+    let scale = max(0.01, 1.0 + params.size / 100.0)
+    let riseUnits = Int(round((params.rise / 100.0) * Double(upm)))
+    let spacingUnits = Int(round((params.letter / 100.0) * Double(upm)))
+    let hhea = tables["hhea"]?.data
+    let globalYMid = hhea.map { Double(Int(readInt16($0, 4)) + Int(readInt16($0, 6))) * 0.5 } ?? 0
 
-    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || weightUnits != 0 {
-      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits, selectedGlyphs: selectedGlyphs)
+    var averageBolden = 0.0
+    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 {
+      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs)
       if let patched {
         tables["glyf"]?.data = patched.glyf
         tables["loca"]?.data = patched.loca
         tables["head"]?.data = patched.head
+        averageBolden = patched.averageBolden
       }
     }
 
-    if spacingUnits != 0, let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, selectedGlyphs: selectedGlyphs)
-      tables["hmtx"]?.data = patchedHmtx
-      tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
-    } else if abs(scale - 1.0) > 0.001, let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: 0, selectedGlyphs: selectedGlyphs)
+    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001,
+       let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs)
       tables["hmtx"]?.data = patchedHmtx
       tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
     }
 
     if abs(params.line) > 0.01 {
       if let hhea = tables["hhea"] {
-        tables["hhea"]?.data = patchHhea(hhea.data, lineHeightPercent: params.line, upm: upm)
+        tables["hhea"]?.data = patchHhea(hhea.data, lineHeightPercent: params.line)
       }
       if let os2 = tables["OS/2"] {
-        tables["OS/2"]?.data = patchOS2(os2.data, lineHeightPercent: params.line, upm: upm)
+        tables["OS/2"]?.data = patchOS2(os2.data, lineHeightPercent: params.line)
       }
     }
 
@@ -298,7 +298,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightUnits: Int, selectedGlyphs: Set<Int>?) -> (glyf: Data, loca: Data, head: Data)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -317,14 +317,20 @@ private final class NativeTTFProcessor {
     var newOffsets = [Int](repeating: 0, count: numGlyphs + 1)
     var current = 0
     var globalMinX = Int.max, globalMinY = Int.max, globalMaxX = Int.min, globalMaxY = Int.min
+    var boldenTotal = 0.0
+    var boldenCount = 0
     for i in 0..<numGlyphs {
       newOffsets[i] = current
       var start = min(max(0, offsets[i]), glyf.count)
       var end = min(max(0, offsets[i + 1]), glyf.count)
       if start > end { swap(&start, &end) }
       var chunk = Data(glyf[start..<end])
-      if (selectedGlyphs == nil || selectedGlyphs!.contains(i)), let transformed = transformSimpleGlyph(chunk, scale: scale, riseUnits: riseUnits, weightUnits: weightUnits) {
-        chunk = transformed
+      if (selectedGlyphs == nil || selectedGlyphs!.contains(i)), let transformed = transformSimpleGlyph(chunk, scale: scale, riseUnits: riseUnits, weightPercent: weightPercent, globalYMid: globalYMid) {
+        chunk = transformed.data
+        if abs(transformed.boldenUnits) > 0.001 {
+          boldenTotal += transformed.boldenUnits
+          boldenCount += 1
+        }
       }
       if chunk.count >= 10 && readInt16(chunk, 0) != 0 {
         globalMinX = min(globalMinX, Int(readInt16(chunk, 2)))
@@ -363,14 +369,15 @@ private final class NativeTTFProcessor {
       writeInt16(&newHead, 40, globalMaxX)
       writeInt16(&newHead, 42, globalMaxY)
     }
-    return (newGlyf, newLoca, newHead)
+    return (newGlyf, newLoca, newHead, boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0)
   }
 
-  private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, weightUnits: Int) -> Data? {
+  private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double) -> (data: Data, boldenUnits: Double)? {
     guard chunk.count >= 10 else { return nil }
     let contours = Int(readInt16(chunk, 0))
     if contours < 0 {
-      return transformCompositeGlyph(chunk, scale: scale, riseUnits: riseUnits)
+      guard let data = transformCompositeGlyph(chunk, scale: scale, riseUnits: riseUnits, globalYMid: globalYMid) else { return nil }
+      return (data, 0)
     }
     if contours == 0 { return nil }
     var p = 10
@@ -425,7 +432,10 @@ private final class NativeTTFProcessor {
       y += dy; ys.append(y)
     }
 
-    let yMid = Double(readInt16(chunk, 4) + readInt16(chunk, 8)) / 2.0
+    let stroke = estimateStrokeSize(xs: xs, ys: ys, endPts: endPts)
+    let weightFactor = weightPercent > 0 ? 1.0 : 0.85
+    let requestedBolden = (weightPercent / 100.0) * weightFactor * stroke * 0.55
+    let boldenUnits = max(-0.35 * stroke, min(0.5 * stroke, requestedBolden))
     var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
     var contourStart = 0
     for contourEnd in endPts {
@@ -434,12 +444,12 @@ private final class NativeTTFProcessor {
         ys: ys,
         start: contourStart,
         end: contourEnd,
-        requestedUnits: weightUnits
+        requestedUnits: boldenUnits
       )
       for i in contourStart...contourEnd {
         let offset = adjusted[i - contourStart]
         xs[i] = clampInt16(Int(round(Double(xs[i]) * scale + offset.x)))
-        ys[i] = clampInt16(Int(round(yMid + (Double(ys[i]) - yMid) * scale + offset.y + Double(riseUnits))))
+        ys[i] = clampInt16(Int(round(globalYMid + (Double(ys[i]) - globalYMid) * scale + offset.y + Double(riseUnits))))
         minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
         minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
       }
@@ -464,10 +474,10 @@ private final class NativeTTFProcessor {
       appendInt16(&out, Int16(clampInt16(value - lastY)))
       lastY = value
     }
-    return out
+    return (out, boldenUnits)
   }
 
-  private static func transformCompositeGlyph(_ chunk: Data, scale: Double, riseUnits: Int) -> Data? {
+  private static func transformCompositeGlyph(_ chunk: Data, scale: Double, riseUnits: Int, globalYMid: Double) -> Data? {
     guard chunk.count >= 14 else { return nil }
     let arg1And2AreWords: UInt16 = 0x0001
     let argsAreXYValues: UInt16 = 0x0002
@@ -481,11 +491,10 @@ private final class NativeTTFProcessor {
     let oldMinY = Int(readInt16(chunk, 4))
     let oldMaxX = Int(readInt16(chunk, 6))
     let oldMaxY = Int(readInt16(chunk, 8))
-    let yMid = Double(oldMinY + oldMaxY) / 2.0
     let newMinX = clampInt16(Int(round(Double(oldMinX) * scale)))
     let newMaxX = clampInt16(Int(round(Double(oldMaxX) * scale)))
-    let newMinY = clampInt16(Int(round(yMid + (Double(oldMinY) - yMid) * scale + Double(riseUnits))))
-    let newMaxY = clampInt16(Int(round(yMid + (Double(oldMaxY) - yMid) * scale + Double(riseUnits))))
+    let newMinY = clampInt16(Int(round(globalYMid + (Double(oldMinY) - globalYMid) * scale + Double(riseUnits))))
+    let newMaxY = clampInt16(Int(round(globalYMid + (Double(oldMaxY) - globalYMid) * scale + Double(riseUnits))))
 
     var out = Data()
     appendInt16(&out, -1)
@@ -572,7 +581,7 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, selectedGlyphs: Set<Int>?) -> Data {
+  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?) -> Data {
     guard hhea.count >= 36 else { return hmtx }
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var out = hmtx
@@ -580,10 +589,10 @@ private final class NativeTTFProcessor {
       if let selectedGlyphs, !selectedGlyphs.contains(i) { continue }
       let p = i * 4
       let oldWidth = Int(readUInt16(out, p))
-      let width = Int(round(Double(oldWidth) * scale)) + spacingUnits
+      let width = Int(round(Double(oldWidth) * scale + boldenUnits)) + spacingUnits
       writeUInt16(&out, p, UInt16(max(0, min(65535, width))))
       let oldBearing = Int(readInt16(out, p + 2))
-      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * scale)))
+      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * scale - boldenUnits * 0.5)))
     }
     return out
   }
@@ -598,7 +607,23 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func offsetContour(xs: [Int], ys: [Int], start: Int, end: Int, requestedUnits: Int) -> [(x: Double, y: Double)] {
+  private static func estimateStrokeSize(xs: [Int], ys: [Int], endPts: [Int]) -> Double {
+    var area = 0.0
+    var perimeter = 0.0
+    var start = 0
+    for end in endPts where end >= start && end < xs.count {
+      area += signedArea(xs: xs, ys: ys, start: start, end: end)
+      for index in start...end {
+        let next = index == end ? start : index + 1
+        perimeter += hypot(Double(xs[next] - xs[index]), Double(ys[next] - ys[index]))
+      }
+      start = end + 1
+    }
+    guard perimeter > 0.001 else { return 0 }
+    return max(0, 2.0 * abs(area) / perimeter)
+  }
+
+  private static func offsetContour(xs: [Int], ys: [Int], start: Int, end: Int, requestedUnits: Double) -> [(x: Double, y: Double)] {
     let count = end - start + 1
     guard count >= 3, requestedUnits != 0 else {
       return Array(repeating: (0, 0), count: max(0, count))
@@ -643,7 +668,9 @@ private final class NativeTTFProcessor {
         nx /= length
         ny /= length
       }
-      output.append((nx * amount, ny * amount))
+      let projection = abs(nx * n2.x + ny * n2.y)
+      let miter = projection > 0.15 ? min(4.0, 1.0 / projection) : 1.0
+      output.append((nx * amount * miter, ny * amount * miter))
     }
     return output
   }
@@ -666,27 +693,33 @@ private final class NativeTTFProcessor {
     return (-dy / length, dx / length)
   }
 
-  private static func patchHhea(_ hhea: Data, lineHeightPercent: Double, upm: Int) -> Data {
+  private static func patchHhea(_ hhea: Data, lineHeightPercent: Double) -> Data {
     guard hhea.count >= 10 else { return hhea }
     var out = hhea
     let asc = Int(readInt16(out, 4))
     let desc = Int(readInt16(out, 6))
-    let body = max(1, asc - desc)
     let currentGap = Int(readInt16(out, 8))
-    let delta = Int(round(Double(max(body, upm)) * lineHeightPercent / 100.0))
-    writeInt16(&out, 8, clampInt16(currentGap + delta))
+    let body = max(1, asc - desc + currentGap)
+    let delta = Int(round(lineHeightPercent / 100.0 * Double(body) * 0.5))
+    writeInt16(&out, 4, asc + delta)
+    writeInt16(&out, 6, desc - delta)
     return out
   }
 
-  private static func patchOS2(_ os2: Data, lineHeightPercent: Double, upm: Int) -> Data {
+  private static func patchOS2(_ os2: Data, lineHeightPercent: Double) -> Data {
     guard os2.count >= 74 else { return os2 }
     var out = os2
     let asc = Int(readInt16(out, 68))
     let desc = Int(readInt16(out, 70))
-    let body = max(1, asc - desc)
     let currentGap = Int(readInt16(out, 72))
-    let delta = Int(round(Double(max(body, upm)) * lineHeightPercent / 100.0))
-    writeInt16(&out, 72, clampInt16(currentGap + delta))
+    let body = max(1, asc - desc + currentGap)
+    let delta = Int(round(lineHeightPercent / 100.0 * Double(body) * 0.5))
+    writeInt16(&out, 68, asc + delta)
+    writeInt16(&out, 70, desc - delta)
+    if out.count >= 78 {
+      writeUInt16(&out, 74, UInt16(max(0, min(65535, Int(readUInt16(out, 74)) + delta))))
+      writeUInt16(&out, 76, UInt16(max(0, min(65535, Int(readUInt16(out, 76)) + delta))))
+    }
     return out
   }
 

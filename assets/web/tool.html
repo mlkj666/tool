@@ -966,19 +966,22 @@ async function loadAndRegisterFont(buffer, target = 'current') {
   const faceKey = isOriginal ? 'originalFontFace' : 'currentFontFace';
   const urlKey = isOriginal ? 'originalFontUrl' : 'currentFontUrl';
   const familyKey = isOriginal ? 'originalLoadedFontFamily' : 'loadedFontFamily';
-  releaseRegisteredFont(faceKey, urlKey);
-
   const family = `${isOriginal ? 'OriginalFont' : 'CurrentFont'}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const url = URL.createObjectURL(new Blob([buffer.slice(0)], { type: 'font/ttf' }));
   const face = new FontFace(family, `url(${url})`);
-  state[urlKey] = url;
-  state[faceKey] = face;
   try {
     await face.load();
     document.fonts.add(face);
+    const oldFace = state[faceKey];
+    const oldUrl = state[urlKey];
+    state[urlKey] = url;
+    state[faceKey] = face;
     state[familyKey] = family;
+    if (oldFace && document.fonts && document.fonts.delete) document.fonts.delete(oldFace);
+    if (oldUrl) URL.revokeObjectURL(oldUrl);
   } catch (error) {
-    releaseRegisteredFont(faceKey, urlKey);
+    if (document.fonts && document.fonts.delete) document.fonts.delete(face);
+    URL.revokeObjectURL(url);
     throw new Error('字体预览加载失败: ' + error.message);
   }
   originalPreviewCache.key = '';
@@ -1031,15 +1034,21 @@ $('fileFont').addEventListener('change', async e => {
   const file = e.target.files[0]; if (!file) return;
   try {
     const buffer = await file.arrayBuffer();
-    state.fontBuffer = buffer; state.originalFontBuffer = buffer.slice(0); state.font = opentype.parse(buffer); state.originalFont = opentype.parse(state.originalFontBuffer);
-    state.fontName = file.name; dom.fontName.textContent = file.name;
-    resetTypographySettings();
-    
-    await loadAndRegisterFont(state.originalFontBuffer, 'original');
+    const originalBuffer = buffer.slice(0);
+    const parsed = opentype.parse(buffer);
+    const originalParsed = opentype.parse(originalBuffer);
+    await loadAndRegisterFont(originalBuffer, 'original');
     await loadAndRegisterFont(buffer, 'current');
-
+    state.fontBuffer = buffer;
+    state.originalFontBuffer = originalBuffer;
+    state.font = parsed;
+    state.originalFont = originalParsed;
+    state.fontName = file.name;
+    dom.fontName.textContent = file.name;
+    resetTypographySettings();
     toast(`已导入字体: ${file.name}`, 'success'); renderPreview();
   } catch (err) { toast('字体加载失败: ' + err.message, 'error'); }
+  e.target.value = '';
 });
 
 function openNativeImagePicker(source = 'photo') {
@@ -1095,17 +1104,18 @@ dom.canvasWrap.addEventListener('drop', async e => {
   if (fontFiles.length) { 
       try {
           const buffer = await fontFiles[0].arrayBuffer(); 
+          const originalBuffer = buffer.slice(0);
+          const parsed = opentype.parse(buffer);
+          const originalParsed = opentype.parse(originalBuffer);
+          await loadAndRegisterFont(originalBuffer, 'original');
+          await loadAndRegisterFont(buffer, 'current');
           state.fontBuffer = buffer;
-          state.originalFontBuffer = buffer.slice(0);
-          state.font = opentype.parse(state.fontBuffer);
-          state.originalFont = opentype.parse(state.originalFontBuffer);
-          state.fontName = fontFiles[0].name; 
+          state.originalFontBuffer = originalBuffer;
+          state.font = parsed;
+          state.originalFont = originalParsed;
+          state.fontName = fontFiles[0].name;
           dom.fontName.textContent = fontFiles[0].name;
           resetTypographySettings();
-          
-          await loadAndRegisterFont(state.originalFontBuffer, 'original');
-          await loadAndRegisterFont(buffer, 'current');
-
           toast(`已导入字体: ${fontFiles[0].name}`, 'success'); 
       } catch (err) { toast(`字体解析失败: ${err.message}`, 'error'); }
   }
@@ -1580,10 +1590,10 @@ function renderPreview() {
   }
   
   const fontSize = state.previewFontSize || 46;
-  const previewScale = Math.max(0.2, Math.min(2.2, 1 + state.fontSize / 100));
-  const renderFontSize = Math.max(8, fontSize * previewScale);
-  const letterSpacing = Math.round(renderFontSize * state.letterSpacing / 100);
-  const baselineOffset = Math.round(renderFontSize * state.baselineOffset / 100);
+  const previewScale = Math.max(0.01, 1 + state.fontSize / 100);
+  const renderFontSize = Math.max(1, fontSize * previewScale);
+  const letterSpacing = Math.round(fontSize * state.letterSpacing / 100);
+  const baselineOffset = Math.round(fontSize * state.baselineOffset / 100);
   const lineHeight = Math.max(0.4, 1.25 * (1 + state.lineHeight / 100));
   const padding = 40;
   const wrapWidth = Math.max(260, (dom.canvasWrap.clientWidth || window.innerWidth || 360) - padding * 2 - 28);
@@ -1683,34 +1693,32 @@ function drawOriginalPreviewLayer(ctx, text, layout, canvasWidth, sectionHeight,
 function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOriginal = false) {
   const adjustedY = y - baselineOffset; 
   const weightPercent = !isOriginal ? state.fontWeight : 0;
-  const negativeWeight = Math.min(Math.abs(Math.min(0, weightPercent)), 80);
-  const positiveStroke = Math.max(0, weightPercent) / 100 * fontSize * 0.18;
+  const estimatedStroke = fontSize * 0.12;
+  const requestedWeight = weightPercent / 100 * (weightPercent > 0 ? 1 : 0.85) * estimatedStroke * 0.55;
+  const previewBolden = Math.max(-estimatedStroke * 0.35, Math.min(estimatedStroke * 0.5, requestedWeight));
+  const positiveStroke = Math.max(0, previewBolden) * 2;
+  const negativeStroke = Math.max(0, -previewBolden) * 2;
   
   const fontFamily = isOriginal ? (state.originalLoadedFontFamily || state.loadedFontFamily) : state.loadedFontFamily;
   const outlineFont = isOriginal ? (state.originalFont || state.font) : state.font;
   if (fontFamily) {
       ctx.fillStyle = color;
       ctx.font = `${fontSize}px "${fontFamily}", sans-serif`;
-      if (negativeWeight > 0) {
-          const metrics = ctx.measureText(ch);
-          const w = Math.max(metrics.width, fontSize * 0.5);
-          const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
-          const sy = Math.max(0.78, 1 - negativeWeight * 0.0025);
-          ctx.save();
-          ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
-          ctx.scale(sx, sy);
-          ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
-          ctx.fillText(ch, x, adjustedY);
-          ctx.restore();
-      } else {
-          ctx.fillText(ch, x, adjustedY);
-      }
+      ctx.fillText(ch, x, adjustedY);
       
       if (!isOriginal && positiveStroke > 0) {
           ctx.strokeStyle = color; 
           ctx.lineWidth = positiveStroke;
           ctx.lineJoin = 'round'; 
           ctx.strokeText(ch, x, adjustedY);
+      } else if (!isOriginal && negativeStroke > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.strokeStyle = '#000';
+          ctx.lineWidth = negativeStroke;
+          ctx.lineJoin = 'round';
+          ctx.strokeText(ch, x, adjustedY);
+          ctx.restore();
       }
   } else {
       try {
@@ -1719,35 +1727,26 @@ function drawFontGlyph(ctx, ch, x, y, fontSize, color, baselineOffset = 0, isOri
         if (!isOriginal && positiveStroke > 0) {
             path.stroke = color; path.strokeWidth = positiveStroke;
         }
-        if (negativeWeight > 0) {
-            const w = getSafeAdvanceWidth(outlineFont, ch, fontSize);
-            const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
-            const sy = Math.max(0.78, 1 - negativeWeight * 0.0025);
+        path.draw(ctx);
+        if (!isOriginal && negativeStroke > 0) {
+            path.fill = null;
+            path.stroke = '#000';
+            path.strokeWidth = negativeStroke;
             ctx.save();
-            ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
-            ctx.scale(sx, sy);
-            ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
+            ctx.globalCompositeOperation = 'destination-out';
             path.draw(ctx);
             ctx.restore();
-        } else {
-            path.draw(ctx);
         }
       } catch (e) { 
         ctx.fillStyle = color; ctx.font = `${fontSize}px sans-serif`; 
-        if (negativeWeight > 0) {
-            const w = Math.max(ctx.measureText(ch).width, fontSize * 0.5);
-            const sx = Math.max(0.42, 1 - negativeWeight * 0.0065);
-            ctx.save();
-            ctx.translate(x + w / 2, adjustedY - fontSize * 0.45);
-            ctx.scale(sx, 1);
-            ctx.translate(-(x + w / 2), -(adjustedY - fontSize * 0.45));
-            ctx.fillText(ch, x, adjustedY);
-            ctx.restore();
-        } else {
-            ctx.fillText(ch, x, adjustedY); 
-        }
+        ctx.fillText(ch, x, adjustedY);
         if (!isOriginal && positiveStroke > 0) {
             ctx.strokeStyle = color; ctx.lineWidth = positiveStroke; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
+        } else if (!isOriginal && negativeStroke > 0) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = '#000'; ctx.lineWidth = negativeStroke; ctx.lineJoin = 'round'; ctx.strokeText(ch, x, adjustedY);
+            ctx.restore();
         }
       }
   }
