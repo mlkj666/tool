@@ -887,7 +887,6 @@ dom.profileModal.addEventListener('click', e => { if (e.target === dom.profileMo
 
 // ==================== 文件系统与配置 ====================
 function checkAuthOnLoad() { enterTool(); }
-checkAuthOnLoad();
 
 function arrayBufferToBase64(buffer) { 
     let binary = ''; const bytes = new Uint8Array(buffer); 
@@ -2595,6 +2594,7 @@ $('btnExportFont').addEventListener('click', async () => {
   } catch(e) { toast(`底层编译失败: ${e.message}`, 'error'); }
   dom.exportModal.classList.remove('show'); $('btnExportFont').disabled=false;
 });
+checkAuthOnLoad();
 </script>
 </body>
 </html>
