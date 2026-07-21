@@ -226,7 +226,7 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
 .preview-toolbar { padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--bg-panel); display: flex; z-index: 10; flex-shrink: 0;}
 .preview-toolbar input[type="text"] { flex: 1; background: var(--bg-control); border: 1px solid transparent; border-radius: 10px; padding: 12px 20px; outline: none; font-size: 16px; transition: all 0.2s; }
 .preview-toolbar input[type="text"]:focus { background: #fff; border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
-.preview-canvas-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 32px; text-align: center; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
+.preview-canvas-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 32px; text-align: center; background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 24px 24px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; overflow-anchor: none; touch-action: pan-y; contain: layout paint; }
 
 .glyph-list { display: flex; flex-direction: column; gap: 12px; }
 .glyph-item { display: flex; align-items: center; gap: 14px; padding: 12px; background: #fff; border-radius: var(--radius-sm); border: 1px solid var(--border); transition: 0.2s; }
@@ -1293,6 +1293,7 @@ async function loadAndRegisterFont(buffer, target = 'current') {
     state[familyKey] = family;
     if (oldFace && document.fonts && document.fonts.delete) document.fonts.delete(oldFace);
     if (oldUrl) URL.revokeObjectURL(oldUrl);
+    glyphMetricCache.clear();
   } catch (error) {
     if (document.fonts && document.fonts.delete) document.fonts.delete(face);
     URL.revokeObjectURL(url);
@@ -1856,20 +1857,28 @@ dom.btnClearRandomColors.addEventListener('click', () => {
 let previewFrame = 0;
 let previewDebounce = 0;
 let previewDragging = false;
+let lastPreviewRender = 0;
 function schedulePreviewRender(immediate = false) {
-  if (previewFrame) return;
   const run = () => {
     previewFrame = 0;
+    lastPreviewRender = performance.now();
     renderPreview();
   };
-  if (immediate) {
+  if (immediate && !previewDragging) {
+    clearTimeout(previewDebounce);
+    previewDebounce = 0;
+    if (previewFrame) cancelAnimationFrame(previewFrame);
     previewFrame = requestAnimationFrame(run);
     return;
   }
-  clearTimeout(previewDebounce);
+  if (previewFrame || previewDebounce) return;
+  const frameDelay = previewDragging
+    ? Math.max(0, 32 - (performance.now() - lastPreviewRender))
+    : 18;
   previewDebounce = setTimeout(() => {
+    previewDebounce = 0;
     previewFrame = requestAnimationFrame(run);
-  }, 18);
+  }, frameDelay);
 }
 
 function bindSlider(id, valId, key, format) {
@@ -1888,15 +1897,44 @@ bindSlider('rngLineHeight', 'valLineHeight', 'lineHeight', formatPercentDelta);
 dom.colorGlobal.addEventListener('input', (e) => { state.globalColor = e.target.value; schedulePreviewRender(); });
 dom.colorGlobal.addEventListener('change', (e) => { state.globalColor = e.target.value; renderPreview(); });
 let previewTextTimer = 0;
-$('txtPreview').addEventListener('input', () => {
-  state.previewText = $('txtPreview').value;
+let editingCanvasHeight = 0;
+dom.txtPreview.addEventListener('focus', () => {
+  editingCanvasHeight = parseFloat(dom.previewCanvas.style.height) || 0;
+});
+dom.txtPreview.addEventListener('input', () => {
+  state.previewText = dom.txtPreview.value;
   clearTimeout(previewTextTimer);
-  previewTextTimer = setTimeout(() => schedulePreviewRender(true), 90);
+  previewTextTimer = setTimeout(() => schedulePreviewRender(true), 220);
+});
+dom.txtPreview.addEventListener('blur', () => {
+  clearTimeout(previewTextTimer);
+  editingCanvasHeight = 0;
+  schedulePreviewRender(true);
 });
 
 // ==================== ★ Canvas 清晰度引擎与渲染 ★ ====================
-function getGlyphMetrics(font, ch, fontSize) {
+const measureCanvas = document.createElement('canvas');
+const measureCtx = measureCanvas.getContext('2d');
+const glyphMetricCache = new Map();
+
+function getGlyphMetrics(font, family, ch, fontSize) {
   const fallback = {advance: fontSize * 0.62, left: 0, right: fontSize * 0.58};
+  const cacheKey = `${family || 'outline'}|${fontSize.toFixed(2)}|${ch}`;
+  const cached = glyphMetricCache.get(cacheKey);
+  if (cached) return cached;
+  if (family && measureCtx) {
+    try {
+      measureCtx.font = `${fontSize}px "${family}", sans-serif`;
+      const measured = measureCtx.measureText(ch);
+      const left = Number.isFinite(measured.actualBoundingBoxLeft) ? -measured.actualBoundingBoxLeft : 0;
+      const right = Number.isFinite(measured.actualBoundingBoxRight) ? measured.actualBoundingBoxRight : measured.width;
+      if (Number.isFinite(measured.width) && measured.width > 0 && Number.isFinite(left) && Number.isFinite(right)) {
+        const result = {advance: Math.max(measured.width, fontSize * 0.12), left, right};
+        glyphMetricCache.set(cacheKey, result);
+        return result;
+      }
+    } catch (_) {}
+  }
   if (!font) return fallback;
   try {
     const unitsPerEm = font.unitsPerEm || 1000;
@@ -1907,14 +1945,16 @@ function getGlyphMetrics(font, ch, fontSize) {
     const rawAdvance = font.getAdvanceWidth(ch, fontSize);
     const outlineAdvance = right - Math.min(0, left) + fontSize * 0.035;
     const advance = Math.max(Number.isFinite(rawAdvance) ? rawAdvance : 0, outlineAdvance, fontSize * 0.12);
-    return {advance, left, right};
+    const result = {advance, left, right};
+    glyphMetricCache.set(cacheKey, result);
+    return result;
   } catch (_) {
     return fallback;
   }
 }
 
-function getSafeAdvanceWidth(font, ch, fontSize) {
-  return getGlyphMetrics(font, ch, fontSize).advance;
+function getSafeAdvanceWidth(font, ch, fontSize, family = '') {
+  return getGlyphMetrics(font, family, ch, fontSize).advance;
 }
 
 function getKerningOffset(font, previousChar, ch, fontSize) {
@@ -1930,7 +1970,7 @@ function getKerningOffset(font, previousChar, ch, fontSize) {
   }
 }
 
-function buildTextLines(text, font, fontSize, spacing, wrapWidth, includeCustomGlyphs) {
+function buildTextLines(text, font, family, fontSize, spacing, wrapWidth, includeCustomGlyphs) {
   const lines = [];
   const widths = [];
   let line = [];
@@ -1957,13 +1997,13 @@ function buildTextLines(text, font, fontSize, spacing, wrapWidth, includeCustomG
     const drawSize = fontSize * sizeScale;
     const metrics = custom
       ? {advance: drawSize * (custom.spacing || 1), left: 0, right: drawSize}
-      : getGlyphMetrics(font, ch, drawSize);
+      : getGlyphMetrics(font, family, ch, drawSize);
     const xOffset = includeCustomGlyphs ? fontSize * adjustment.x / 100 : 0;
     const yOffset = includeCustomGlyphs ? fontSize * adjustment.y / 100 : 0;
     const after = spacing + (includeCustomGlyphs ? fontSize * adjustment.spacing / 100 : 0);
     let kern = line.length && !custom ? getKerningOffset(font, previousChar, ch, drawSize) : 0;
     let origin = cursor + kern;
-    const minimumGap = Math.max(1.5, fontSize * 0.045);
+    const minimumGap = Math.max(2.5, fontSize * 0.08);
     const allowsOverlap = spacing < 0 || (line.length && line[line.length - 1].after < 0);
     if (line.length && !allowsOverlap) {
       const currentLeft = origin + xOffset + metrics.left;
@@ -2014,25 +2054,31 @@ function renderPreview() {
   const lineHeight = Math.max(0.4, 1.25 * (1 + state.lineHeight / 100));
   const padding = 40;
   const wrapWidth = Math.max(260, (dom.canvasWrap.clientWidth || window.innerWidth || 360) - padding * 2 - 28);
-  const adjustedLayout = buildTextLines(text, state.font, renderFontSize, letterSpacing, wrapWidth, true);
+  const adjustedLayout = buildTextLines(text, state.font, state.loadedFontFamily, renderFontSize, letterSpacing, wrapWidth, true);
   const lineGroups = adjustedLayout.lines;
   const lineWidths = adjustedLayout.widths;
   const originalLineHeightPx = fontSize * 1.25;
-  const originalLayout = buildTextLines(text, state.originalFont || state.font, fontSize, 0, wrapWidth, false);
+  const originalLayout = buildTextLines(text, state.originalFont || state.font, state.originalLoadedFontFamily || state.loadedFontFamily, fontSize, 0, wrapWidth, false);
   const widestLine = Math.max(...lineWidths, ...originalLayout.widths, 300);
   const totalLines = lineGroups.length || 1; const lineHeightPx = renderFontSize * lineHeight;
   const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
   
   const canvasWidth = Math.max(300, (dom.canvasWrap.clientWidth || widestLine + padding * 2) - 8);
   const originalSectionHeight = originalLayout.lines.length * originalLineHeightPx + padding;
-  const canvasHeight = Math.max(sectionHeight + originalSectionHeight + padding, 200);
+  let canvasHeight = Math.max(sectionHeight + originalSectionHeight + padding, 200);
+  if (document.activeElement === dom.txtPreview) {
+    canvasHeight = Math.max(canvasHeight, editingCanvasHeight);
+    editingCanvasHeight = canvasHeight;
+  }
 
+  const previousScrollTop = dom.canvasWrap.scrollTop;
   const pixelWidth = Math.max(1, Math.round(canvasWidth * ratio));
   const pixelHeight = Math.max(1, Math.round(canvasHeight * ratio));
   if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
   if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
   canvas.style.width = canvasWidth + 'px';
   canvas.style.height = canvasHeight + 'px';
+  if (dom.canvasWrap.scrollTop !== previousScrollTop) dom.canvasWrap.scrollTop = previousScrollTop;
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   

@@ -72,10 +72,21 @@ void main() {
     },
   );
 
-  test('preview uses outline bounds and a smaller default size', () {
+  test('preview uses rendered glyph bounds and a smaller default size', () {
     expect(toolHtml, contains('previewFontSize: 34'));
     expect(toolHtml, contains('glyph.getBoundingBox()'));
+    expect(toolHtml, contains('actualBoundingBoxLeft'));
+    expect(toolHtml, contains('actualBoundingBoxRight'));
+    expect(toolHtml, contains('glyphMetricCache'));
+    expect(toolHtml, contains('fontSize * 0.08'));
     expect(toolHtml, contains('collisionCorrection'));
+  });
+
+  test('preview input and slider rendering stay stable', () {
+    expect(toolHtml, contains('editingCanvasHeight'));
+    expect(toolHtml, contains('setTimeout(() => schedulePreviewRender(true), 220)'));
+    expect(toolHtml, contains('32 - (performance.now() - lastPreviewRender)'));
+    expect(toolHtml, contains('overflow-anchor: none'));
   });
 
   test('random color values default to thirty', () {
