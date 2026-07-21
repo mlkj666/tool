@@ -62,6 +62,39 @@ class SessionUser {
   };
 }
 
+final Uri _sessionApi = Uri.parse('https://tool.uxgzs.icu/api.php');
+
+bool _isExpired(SessionUser user) {
+  if (user.role == 'admin') return false;
+  final value = user.expireTime?.trim() ?? '';
+  if (value.isEmpty) return true;
+  final expiresAt = DateTime.tryParse(value.replaceFirst(' ', 'T'));
+  return expiresAt == null || !expiresAt.isAfter(DateTime.now());
+}
+
+Future<SessionUser?> _validateSession(String? cookie) async {
+  if (cookie == null || cookie.isEmpty) return null;
+  try {
+    final response = await http
+        .post(
+          _sessionApi.replace(queryParameters: {'action': 'check_auth'}),
+          headers: {
+            'Cookie': cookie,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+    if (data is! Map<String, dynamic> || data['success'] != true) return null;
+    final rawUser = data['user'];
+    if (rawUser is! Map) return null;
+    final user = SessionUser.fromJson(Map<String, dynamic>.from(rawUser));
+    return _isExpired(user) ? null : user;
+  } catch (_) {
+    return null;
+  }
+}
+
 class AppGate extends StatefulWidget {
   const AppGate({super.key});
 
@@ -86,11 +119,22 @@ class _AppGateState extends State<AppGate> {
     final cookie = prefs.getString('bs_cookie');
     if (userJson != null) {
       try {
-        _user = SessionUser.fromJson(jsonDecode(userJson));
-        _cookie = cookie;
+        final cachedUser = SessionUser.fromJson(jsonDecode(userJson));
+        if (!_isExpired(cachedUser)) {
+          final verifiedUser = await _validateSession(cookie);
+          if (verifiedUser != null) {
+            _user = verifiedUser;
+            _cookie = cookie;
+            await prefs.setString('bs_user', jsonEncode(verifiedUser.toJson()));
+          }
+        }
       } catch (_) {
-        await prefs.remove('bs_user');
+        _user = null;
       }
+    }
+    if (_user == null) {
+      await prefs.remove('bs_user');
+      await prefs.remove('bs_cookie');
     }
     if (mounted) setState(() => _booting = false);
   }
@@ -394,6 +438,7 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
   late final WebViewController _controller;
   var _progress = 0;
   var _reloadingAfterResume = false;
+  DateTime? _lastAuthCheck;
   String? _error;
 
   @override
@@ -405,8 +450,10 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
       ..setBackgroundColor(Colors.white)
       ..addJavaScriptChannel(
         'AppBridge',
-        onMessageReceived: (message) {
-          if (message.message == 'logout') widget.onLogout();
+        onMessageReceived: (message) async {
+          if (message.message == 'logout' || message.message == 'expired') {
+            await widget.onLogout();
+          }
         },
       )
       ..addJavaScriptChannel(
@@ -470,6 +517,7 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
     if (_reloadingAfterResume) return;
     _reloadingAfterResume = true;
     try {
+      if (!await _ensureAuthorized(force: true)) return;
       if (_error != null) {
         await _loadTool();
         return;
@@ -488,6 +536,7 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
 
   Future<void> _saveExportedFile(String payload) async {
     try {
+      if (!await _ensureAuthorized()) return;
       final data = jsonDecode(payload);
       if (data is! Map<String, dynamic>) return;
       final filename = _safeFilename(
@@ -506,6 +555,7 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
 
   Future<void> _pickNativeImages(String source) async {
     try {
+      if (!await _ensureAuthorized()) return;
       final result = await _nativeChannel.invokeMethod<List<Object?>>(
         'pickImages',
         {'source': source},
@@ -522,6 +572,7 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
   Future<void> _processNativeFont(String payload) async {
     var callbackId = '';
     try {
+      if (!await _ensureAuthorized()) return;
       final data = jsonDecode(payload);
       if (data is! Map<String, dynamic>) return;
       callbackId = (data['id'] ?? '').toString();
@@ -556,6 +607,26 @@ class _ToolPanelState extends State<ToolPanel> with WidgetsBindingObserver {
         .trim();
     if (cleaned.isEmpty) return 'BS-Font.ttf';
     return cleaned.length > 120 ? cleaned.substring(0, 120) : cleaned;
+  }
+
+  Future<bool> _ensureAuthorized({bool force = false}) async {
+    if (_isExpired(widget.user)) {
+      await widget.onLogout();
+      return false;
+    }
+    final now = DateTime.now();
+    if (!force &&
+        _lastAuthCheck != null &&
+        now.difference(_lastAuthCheck!).inSeconds < 30) {
+      return true;
+    }
+    final user = await _validateSession(widget.cookie);
+    if (user == null) {
+      await widget.onLogout();
+      return false;
+    }
+    _lastAuthCheck = now;
+    return true;
   }
 
   Future<void> _maybeShowAnnouncement() async {

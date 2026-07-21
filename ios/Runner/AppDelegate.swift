@@ -172,6 +172,9 @@ import UniformTypeIdentifiers
       result(FlutterError(code: "bad_args", message: "字体数据无效", details: nil))
       return
     }
+      let characterSpacing = (args["characterSpacing"] as? [String: Any])?.reduce(into: [String: Double]()) { result, entry in
+        if let value = entry.value as? NSNumber { result[entry.key] = value.doubleValue }
+      } ?? [:]
       let params = NativeFontAdjustParams(
         size: args["size"] as? Double ?? 0,
         weight: args["weight"] as? Double ?? 0,
@@ -179,7 +182,8 @@ import UniformTypeIdentifiers
         line: args["line"] as? Double ?? 0,
         rise: args["rise"] as? Double ?? 0,
         targetAll: args["targetAll"] as? Bool ?? true,
-        chars: args["chars"] as? String ?? ""
+        chars: args["chars"] as? String ?? "",
+        characterSpacing: characterSpacing
     )
     fontProcessingQueue.async {
       do {
@@ -214,6 +218,7 @@ private struct NativeFontAdjustParams {
   let rise: Double
   let targetAll: Bool
   let chars: String
+  let characterSpacing: [String: Double]
 }
 
 private enum NativeFontError: LocalizedError {
@@ -237,7 +242,7 @@ private struct FontTable {
 }
 
 private final class NativeTTFProcessor {
-  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil) throws -> Data {
+  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil, glyphSpacingPercent: [Int: Double] = [:]) throws -> Data {
     var tables = try NativeTTFProcessor.readTables(data)
     guard let head = tables["head"], let maxp = tables["maxp"], let loca = tables["loca"], let glyf = tables["glyf"] else {
       throw NativeFontError.unsupportedFont
@@ -261,9 +266,9 @@ private final class NativeTTFProcessor {
       }
     }
 
-    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001,
+    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001 || !glyphSpacingPercent.isEmpty,
        let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs)
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphSpacingPercent: glyphSpacingPercent, upm: upm)
       tables["hmtx"]?.data = patchedHmtx
       tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
     }
@@ -592,18 +597,23 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?) -> Data {
+  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?, glyphSpacingPercent: [Int: Double], upm: Int) -> Data {
     guard hhea.count >= 36 else { return hmtx }
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var out = hmtx
     for i in 0..<count {
-      if let selectedGlyphs, !selectedGlyphs.contains(i) { continue }
+      let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
+      let characterSpacingUnits = Int(round((glyphSpacingPercent[i] ?? 0) / 100.0 * Double(upm)))
+      if !selected && characterSpacingUnits == 0 { continue }
       let p = i * 4
       let oldWidth = Int(readUInt16(out, p))
-      let width = Int(round(Double(oldWidth) * scale + boldenUnits)) + spacingUnits
+      let appliedScale = selected ? scale : 1.0
+      let appliedBolden = selected ? boldenUnits : 0
+      let appliedSpacing = selected ? spacingUnits : 0
+      let width = Int(round(Double(oldWidth) * appliedScale + appliedBolden)) + appliedSpacing + characterSpacingUnits
       writeUInt16(&out, p, UInt16(max(0, min(65535, width))))
       let oldBearing = Int(readInt16(out, p + 2))
-      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * scale - boldenUnits * 0.5)))
+      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * appliedScale - appliedBolden * 0.5)))
     }
     return out
   }
@@ -868,8 +878,8 @@ private final class NativeTTFProcessor {
 
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars)
-    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs)
+    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterSpacing: params.characterSpacing)
+    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphSpacingPercent: converted.glyphSpacingPercent)
   }
 }
 
@@ -981,7 +991,7 @@ private final class PathCollector {
 }
 
 private enum CoreTextOutlineConverter {
-  static func convert(data: Data, selectedCharacters: String) throws -> (data: Data, selectedGlyphs: Set<Int>) {
+  static func convert(data: Data, selectedCharacters: String, characterSpacing: [String: Double]) throws -> (data: Data, selectedGlyphs: Set<Int>, glyphSpacingPercent: [Int: Double]) {
     guard let provider = CGDataProvider(data: data as CFData),
           let cgFont = CGFont(provider) else {
       throw NativeFontError.unsupportedFont
@@ -994,6 +1004,10 @@ private enum CoreTextOutlineConverter {
     let unitsPerEm = max(1, Int(cgFont.unitsPerEm))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(unitsPerEm), nil, nil)
     let selectedGlyphs = glyphIDs(for: selectedCharacters, font: ctFont)
+    var glyphSpacingPercent: [Int: Double] = [:]
+    for (characters, percent) in characterSpacing {
+      for glyph in glyphIDs(for: characters, font: ctFont) { glyphSpacingPercent[glyph] = percent }
+    }
     var offsets: [Int] = [0]
     var glyf = Data()
     var hmtx = Data()
@@ -1055,7 +1069,7 @@ private enum CoreTextOutlineConverter {
     tables["maxp"] = FontTable(tag: "maxp", checksum: 0, data: newMaxp)
     tables["glyf"] = FontTable(tag: "glyf", checksum: 0, data: glyf)
     tables["loca"] = FontTable(tag: "loca", checksum: 0, data: loca)
-    return (NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000), selectedGlyphs)
+    return (NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000), selectedGlyphs, glyphSpacingPercent)
   }
 
   private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
