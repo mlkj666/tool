@@ -178,11 +178,17 @@ main.tool-main { display: flex; flex: 1; overflow: hidden; position: relative; }
 .check-row input::before { content: ''; width: 9px; height: 5px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) scale(0); transition: transform .12s; }
 .check-row input:checked { background: var(--accent-blue); border-color: var(--accent-blue); }
 .check-row input:checked::before { transform: rotate(-45deg) scale(1); }
-.inline-editor { display: grid; grid-template-columns: minmax(0,1fr) 86px 40px; gap: 8px; align-items: center; }
+.micro-editor { padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-app); }
+.micro-char-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; margin-bottom: 12px; }
+.micro-char-status { min-width: 54px; text-align: center; font-size: 12px; font-weight: 600; color: var(--text-sec); }
+.micro-slider-row { display: grid; grid-template-columns: 48px minmax(0,1fr) 48px; gap: 8px; align-items: center; min-height: 36px; }
+.micro-slider-row label { font-size: 12px; color: var(--text-sec); }
+.micro-slider-row input[type=range] { margin: 0; }
+.micro-slider-row output { text-align: right; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .spacing-list { display: grid; gap: 7px; margin-top: 9px; }
-.spacing-item { display: grid; grid-template-columns: minmax(0,1fr) auto 32px; gap: 8px; align-items: center; min-height: 38px; padding: 6px 7px 6px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-app); }
+.spacing-item { display: grid; grid-template-columns: 40px minmax(0,1fr) 32px; gap: 8px; align-items: center; min-height: 38px; padding: 6px 7px 6px 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-app); }
 .spacing-char { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
-.spacing-value { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-sec); }
+.spacing-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-sec); }
 .icon-action { width: 32px; height: 32px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); display: grid; place-items: center; cursor: pointer; }
 .icon-action:hover { background: #FEE2E2; color: var(--danger); }
 .icon-action svg { width: 15px; height: 15px; }
@@ -283,50 +289,54 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
     position: absolute; top: 56px; left: 0; right: 0; bottom: 0; 
     flex-direction: column; padding-bottom: 60px; 
   }
-  .preview-area { flex: 1; height: 100%; width: 100%; }
+  .preview-area { flex: 1; height: 100%; width: 100%; min-height: 0; }
+  .preview-toolbar { padding: 10px 12px; }
+  .preview-toolbar input[type="text"] { height: 42px; padding: 8px 13px; font-size: 15px; border-radius: 8px; }
+  .preview-canvas-wrap { padding: 18px 10px 28px; overflow-anchor: none; }
   
   /* 纯白扁平底边栏 */
   .mobile-toolbar {
     display: flex; flex-direction: row; position: absolute; bottom: 0; left: 0; width: 100%; 
     z-index: 50; background: #ffffff; border-top: 1px solid var(--border);
-    justify-content: space-around; padding-bottom: env(safe-area-inset-bottom, 0px);
-    box-sizing: border-box; box-shadow: none;
+    justify-content: space-around; padding: 4px 12px env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box; box-shadow: 0 -8px 24px rgba(17,24,39,.06);
   }
   .m-tool-btn {
     background: transparent; border: none; display: flex; flex-direction: column;
     align-items: center; gap: 4px; font-size: 11px; color: var(--text-sec); font-weight: 600; cursor: pointer;
-    padding: 10px 16px; border-radius: 12px; transition: 0.2s;
+    flex: 1; min-height: 54px; padding: 7px 16px; border-radius: 8px; transition: color .18s, background .18s, transform .18s;
   }
   .m-tool-btn:active { background: var(--bg-hover); }
   .m-tool-btn svg { width: 20px; height: 20px; color: var(--text-sec); transition: 0.2s;}
   .m-tool-btn.active { color: var(--accent-blue); }
-  .m-tool-btn.active svg { color: var(--accent-blue); transform: translateY(-2px); }
+  .m-tool-btn.active { background: #EFF6FF; }
+  .m-tool-btn.active svg { color: var(--accent-blue); transform: translateY(-1px); }
 
   /* 半屏抽屉 */
   .sidebar, .right-panel {
     position: fixed; bottom: 0; left: 0; width: 100vw; 
-    height: 50vh; max-height: 50vh; box-sizing: border-box;
-    border-radius: 24px 24px 0 0; z-index: 1000; 
-    transform: translateY(150%); opacity: 0; visibility: hidden;
-    transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
-    padding: 0 24px calc(24px + env(safe-area-inset-bottom));
+    height: min(76dvh, 680px); max-height: calc(100dvh - 74px); box-sizing: border-box;
+    border-radius: 16px 16px 0 0; z-index: 1000;
+    transform: translate3d(0, 105%, 0); visibility: hidden;
+    transition: transform .28s cubic-bezier(.2,.8,.2,1), visibility 0s linear .28s;
+    padding: 0 18px calc(24px + env(safe-area-inset-bottom));
     border: none; display: flex; flex-direction: column;
-    background: var(--bg-panel); overscroll-behavior-y: contain; 
-    overflow-x: hidden; touch-action: pan-y; box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+    background: var(--bg-panel); overscroll-behavior-y: contain;
+    overflow-x: hidden; touch-action: pan-y; box-shadow: 0 -16px 40px rgba(17,24,39,.14); will-change: transform;
   }
-  .sidebar.show, .right-panel.show { transform: translateY(0); opacity: 1; visibility: visible; }
+  .sidebar.show, .right-panel.show { transform: translate3d(0,0,0); visibility: visible; transition-delay: 0s; }
   
   .sheet-header {
-    display: flex; flex-direction: column; align-items: center; padding: 12px 0 16px;
-    margin: 0 -24px 16px; background: var(--bg-panel); border-radius: 24px 24px 0 0;
+    display: flex; flex-direction: column; align-items: center; padding: 10px 0 12px;
+    margin: 0 -18px 14px; background: var(--bg-panel); border-radius: 16px 16px 0 0;
     position: sticky; top: 0; z-index: 10; cursor: pointer; border-bottom: 1px solid var(--border);
   }
   .sheet-handle { width: 36px; height: 4px; background: #D1D5DB; border-radius: 2px; margin-bottom: 8px; }
-  .sheet-close-text { font-size: 11px; color: var(--text-muted); font-weight: 600; }
+  .sheet-close-text { font-size: 12px; color: var(--text-sec); font-weight: 600; }
 
   .sheet-backdrop {
     position: absolute; inset: 0; background: rgba(0,0,0,0.05); z-index: 998;
-    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
   }
   .sheet-backdrop.show { opacity: 1; pointer-events: all; }
 }
@@ -449,11 +459,16 @@ input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
           <button class="btn" id="btnTargetChars" type="button">指定字符</button>
         </div>
         <input type="text" id="txtTargetChars" placeholder="输入需要调整的字符" style="display:none;width:100%;margin-top:9px;">
-        <div class="val-row" style="margin-top:14px;"><label>单字间距</label><span class="val">独立设置</span></div>
-        <div class="inline-editor">
-          <input class="field-input" type="text" id="singleSpacingChars" maxlength="20" placeholder="输入字符">
-          <input class="field-input" type="number" id="singleSpacingValue" min="-50" max="100" step="1" value="0" aria-label="单字间距百分比">
-          <button class="btn accent" id="btnAddSingleSpacing" type="button" title="添加单字间距" style="width:40px;padding:0;">+</button>
+        <div class="val-row" style="margin-top:14px;"><label>单字微调</label><span class="val">实时预览</span></div>
+        <div class="micro-editor">
+          <div class="micro-char-row">
+            <input class="field-input" type="text" id="singleAdjustChar" maxlength="2" placeholder="输入一个字符">
+            <span class="micro-char-status" id="singleAdjustStatus">未选择</span>
+          </div>
+          <div class="micro-slider-row"><label>大小</label><input type="range" id="rngSingleSize" min="-50" max="100" value="0" step="1"><output id="valSingleSize">+0%</output></div>
+          <div class="micro-slider-row"><label>字距</label><input type="range" id="rngSingleSpacing" min="-50" max="100" value="0" step="1"><output id="valSingleSpacing">+0%</output></div>
+          <div class="micro-slider-row"><label>左右</label><input type="range" id="rngSingleX" min="-50" max="50" value="0" step="1"><output id="valSingleX">+0%</output></div>
+          <div class="micro-slider-row"><label>上下</label><input type="range" id="rngSingleY" min="-50" max="50" value="0" step="1"><output id="valSingleY">+0%</output></div>
         </div>
         <div class="spacing-list" id="singleSpacingList"></div>
         <button class="btn accent full" id="btnApplyLayout" style="margin-top:14px;">应用调整</button>
@@ -696,9 +711,9 @@ const state = {
   font: null, originalFont: null, fontBuffer: null, originalFontBuffer: null, fontName: '', previewText: '',
   loadedFontFamily: null, originalLoadedFontFamily: null,
   currentFontFace: null, originalFontFace: null, currentFontUrl: null, originalFontUrl: null,
-  previewFontSize: 46,
+  previewFontSize: 34,
   fontSize: 0, fontWeight: 0, letterSpacing: 0, baselineOffset: 0, lineHeight: 0,
-  targetAll: true, targetChars: '', perCharSpacing: {},
+  targetAll: true, targetChars: '', characterAdjustments: {},
   globalColor: '#000000', perCharColors: {}, randomGlyphColors: {}, glyphImages: {}, drawnGlyphs: {}, randomPool: 30,
   pendingAssignments: [], 
 };
@@ -712,7 +727,9 @@ const dom = {
   rngSpacing: $('rngSpacing'), valSpacing: $('valSpacing'), rngBaseline: $('rngBaseline'), valBaseline: $('valBaseline'),
   rngLineHeight: $('rngLineHeight'), valLineHeight: $('valLineHeight'), btnApplyLayout: $('btnApplyLayout'),
   btnTargetAll: $('btnTargetAll'), btnTargetChars: $('btnTargetChars'), txtTargetChars: $('txtTargetChars'),
-  singleSpacingChars: $('singleSpacingChars'), singleSpacingValue: $('singleSpacingValue'), singleSpacingList: $('singleSpacingList'), btnAddSingleSpacing: $('btnAddSingleSpacing'),
+  singleAdjustChar: $('singleAdjustChar'), singleAdjustStatus: $('singleAdjustStatus'), singleSpacingList: $('singleSpacingList'),
+  rngSingleSize: $('rngSingleSize'), valSingleSize: $('valSingleSize'), rngSingleSpacing: $('rngSingleSpacing'), valSingleSpacing: $('valSingleSpacing'),
+  rngSingleX: $('rngSingleX'), valSingleX: $('valSingleX'), rngSingleY: $('rngSingleY'), valSingleY: $('valSingleY'),
   colorGlobal: $('colorGlobal'), addCharColorPanel: $('addCharColorPanel'), newCharInput: $('newCharInput'), newCharColor: $('newCharColor'),
   btnRandomAllColors: $('btnRandomAllColors'), btnClearRandomColors: $('btnClearRandomColors'),
   
@@ -785,6 +802,8 @@ async function downloadBlob(blob, filename) {
 // ==================== 移动端 抽屉呼出系统 ====================
 function closeAllSheets() {
     if (document.activeElement) document.activeElement.blur();
+    dom.panelSidebar.style.transform = '';
+    dom.panelRight.style.transform = '';
     dom.panelSidebar.classList.remove('show');
     dom.panelRight.classList.remove('show');
     dom.sheetBackdrop.classList.remove('show');
@@ -799,6 +818,7 @@ document.querySelectorAll('.m-tool-btn').forEach(btn => {
             closeAllSheets();
         } else {
             closeAllSheets();
+            targetPanel.style.transform = '';
             targetPanel.classList.add('show');
             dom.sheetBackdrop.classList.add('show');
             btn.classList.add('active');
@@ -806,8 +826,35 @@ document.querySelectorAll('.m-tool-btn').forEach(btn => {
     });
 });
 dom.sheetBackdrop.addEventListener('click', closeAllSheets);
-$('closeSidebarBtn')?.addEventListener('click', closeAllSheets);
-$('closeRightBtn')?.addEventListener('click', closeAllSheets);
+
+function setupSheetGesture(panel, handle) {
+  if (!panel || !handle) return;
+  let startY = 0;
+  let deltaY = 0;
+  handle.addEventListener('pointerdown', event => {
+    if (!panel.classList.contains('show')) return;
+    startY = event.clientY;
+    deltaY = 0;
+    handle.setPointerCapture(event.pointerId);
+    panel.style.transition = 'none';
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!handle.hasPointerCapture(event.pointerId)) return;
+    deltaY = Math.max(0, event.clientY - startY);
+    panel.style.transform = `translate3d(0,${deltaY}px,0)`;
+  });
+  const finish = event => {
+    if (!handle.hasPointerCapture(event.pointerId)) return;
+    handle.releasePointerCapture(event.pointerId);
+    panel.style.transition = '';
+    panel.style.transform = '';
+    if (deltaY > 64 || Math.abs(deltaY) < 6) closeAllSheets();
+  };
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
+}
+setupSheetGesture(dom.panelSidebar, $('closeSidebarBtn'));
+setupSheetGesture(dom.panelRight, $('closeRightBtn'));
 
 // ==================== 登录验证 API ====================
 let isRegisterMode = false;
@@ -832,7 +879,7 @@ function rejectExpiredAccount() {
 const protectedToolActions = new Set([
   'btnLoadFont', 'btnLoadImages', 'btnLoadZip', 'btnLoadConfig', 'btnExport',
   'btnExportFont', 'btnApplyLayout', 'btnApplyRename', 'btnRestoreFont',
-  'btnRandomAllColors', 'btnConfirmAddChar', 'btnAddSingleSpacing'
+  'btnRandomAllColors', 'btnConfirmAddChar'
 ]);
 document.addEventListener('click', event => {
   const button = event.target.closest('button');
@@ -987,7 +1034,7 @@ function resetTypographySettings() {
     letterSpacing: 0,
     baselineOffset: 0,
     lineHeight: 0,
-    perCharSpacing: {},
+    characterAdjustments: {},
     globalColor: '#000000',
     perCharColors: {},
     randomGlyphColors: {},
@@ -1118,7 +1165,7 @@ function resetLayoutDeltas() {
   state.letterSpacing = 0;
   state.baselineOffset = 0;
   state.lineHeight = 0;
-  state.perCharSpacing = {};
+  state.characterAdjustments = {};
   syncLayoutControls();
   renderSingleSpacingList();
 }
@@ -1135,33 +1182,85 @@ dom.btnTargetChars.addEventListener('click', () => { state.targetAll = false; sy
 dom.txtTargetChars.addEventListener('input', () => { state.targetChars = dom.txtTargetChars.value; });
 syncTargetScope();
 
+function normalizedCharacterAdjustment(value = {}) {
+  return {
+    size: Number(value.size) || 0,
+    spacing: Number(value.spacing) || 0,
+    x: Number(value.x) || 0,
+    y: Number(value.y) || 0
+  };
+}
+
+function selectedAdjustmentChar() {
+  return [...dom.singleAdjustChar.value.trim()][0] || '';
+}
+
+function syncSingleAdjustmentControls() {
+  const ch = selectedAdjustmentChar();
+  const adjustment = normalizedCharacterAdjustment(state.characterAdjustments[ch]);
+  dom.singleAdjustStatus.textContent = ch || '未选择';
+  for (const [range, output, key] of [
+    [dom.rngSingleSize, dom.valSingleSize, 'size'],
+    [dom.rngSingleSpacing, dom.valSingleSpacing, 'spacing'],
+    [dom.rngSingleX, dom.valSingleX, 'x'],
+    [dom.rngSingleY, dom.valSingleY, 'y']
+  ]) {
+    range.disabled = !ch;
+    range.value = adjustment[key];
+    output.textContent = formatPercentDelta(adjustment[key]);
+  }
+}
+
 function renderSingleSpacingList() {
-  const entries = Object.entries(state.perCharSpacing || {});
-  dom.singleSpacingList.innerHTML = entries.map(([ch, value]) => `
+  const entries = Object.entries(state.characterAdjustments || {});
+  dom.singleSpacingList.innerHTML = entries.map(([ch, adjustment]) => `
     <div class="spacing-item">
-      <span class="spacing-char">${escapeHtml(ch)}</span>
-      <span class="spacing-value">${formatPercentDelta(value)}</span>
-      <button class="icon-action" type="button" data-remove-spacing="${encodeURIComponent(ch)}" title="删除">
+      <button class="spacing-char" type="button" data-select-adjustment="${encodeURIComponent(ch)}" style="border:0;background:transparent;text-align:left;cursor:pointer;">${escapeHtml(ch)}</button>
+      <span class="spacing-value">大小 ${formatPercentDelta(adjustment.size)} / 字距 ${formatPercentDelta(adjustment.spacing)} / X ${formatPercentDelta(adjustment.x)} / Y ${formatPercentDelta(adjustment.y)}</span>
+      <button class="icon-action" type="button" data-remove-adjustment="${encodeURIComponent(ch)}" title="删除">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 10v6M14 10v6"/></svg>
       </button>
     </div>`).join('');
+  syncSingleAdjustmentControls();
 }
 
-dom.btnAddSingleSpacing.addEventListener('click', () => {
-  const chars = [...new Set([...dom.singleSpacingChars.value.trim()])];
-  if (!chars.length) return toast('请输入需要设置间距的字符', 'error');
-  const value = Math.max(-50, Math.min(100, Number(dom.singleSpacingValue.value) || 0));
-  chars.forEach(ch => { state.perCharSpacing[ch] = value; });
-  dom.singleSpacingChars.value = '';
-  dom.singleSpacingValue.value = value;
-  renderSingleSpacingList();
-  schedulePreviewRender(true);
+dom.singleAdjustChar.addEventListener('input', () => {
+  const ch = selectedAdjustmentChar();
+  dom.singleAdjustChar.value = ch;
+  syncSingleAdjustmentControls();
 });
 
+for (const [range, output, key] of [
+  [dom.rngSingleSize, dom.valSingleSize, 'size'],
+  [dom.rngSingleSpacing, dom.valSingleSpacing, 'spacing'],
+  [dom.rngSingleX, dom.valSingleX, 'x'],
+  [dom.rngSingleY, dom.valSingleY, 'y']
+]) {
+  range.addEventListener('input', () => {
+    const ch = selectedAdjustmentChar();
+    if (!ch) return;
+    const adjustment = normalizedCharacterAdjustment(state.characterAdjustments[ch]);
+    adjustment[key] = Number(range.value) || 0;
+    state.characterAdjustments[ch] = adjustment;
+    output.textContent = formatPercentDelta(adjustment[key]);
+    previewDragging = true;
+    schedulePreviewRender(true);
+  });
+  range.addEventListener('change', () => { previewDragging = false; renderSingleSpacingList(); schedulePreviewRender(true); });
+}
+
 dom.singleSpacingList.addEventListener('click', event => {
-  const button = event.target.closest('[data-remove-spacing]');
-  if (!button) return;
-  delete state.perCharSpacing[decodeURIComponent(button.dataset.removeSpacing)];
+  const selectButton = event.target.closest('[data-select-adjustment]');
+  if (selectButton) {
+    dom.singleAdjustChar.value = decodeURIComponent(selectButton.dataset.selectAdjustment);
+    syncSingleAdjustmentControls();
+    return;
+  }
+  const removeButton = event.target.closest('[data-remove-adjustment]');
+  if (!removeButton) return;
+  const ch = decodeURIComponent(removeButton.dataset.removeAdjustment);
+  delete state.characterAdjustments[ch];
+  if (selectedAdjustmentChar() === ch) dom.singleAdjustChar.value = '';
   renderSingleSpacingList();
   schedulePreviewRender(true);
 });
@@ -1207,7 +1306,7 @@ async function loadAndRegisterFont(buffer, target = 'current') {
 dom.btnExport.addEventListener('click', () => {
   const config = { 
       version: 1, fontName: state.fontName, 
-      settings: { fontSize: state.fontSize, fontWeight: state.fontWeight, letterSpacing: state.letterSpacing, baselineOffset: state.baselineOffset, lineHeight: state.lineHeight, globalColor: state.globalColor, randomPool: state.randomPool, targetAll: state.targetAll, targetChars: state.targetChars, perCharSpacing: state.perCharSpacing },
+      settings: { fontSize: state.fontSize, fontWeight: state.fontWeight, letterSpacing: state.letterSpacing, baselineOffset: state.baselineOffset, lineHeight: state.lineHeight, globalColor: state.globalColor, randomPool: state.randomPool, targetAll: state.targetAll, targetChars: state.targetChars, characterAdjustments: state.characterAdjustments },
       perCharColors: state.perCharColors, randomGlyphColors: state.randomGlyphColors, glyphImages: state.glyphImages, drawnGlyphs: state.drawnGlyphs, previewText: state.previewText
   };
   if (state.fontBuffer) config.fontBufferB64 = arrayBufferToBase64(state.fontBuffer);
@@ -1223,7 +1322,10 @@ dom.fileConfig.addEventListener('change', async e => {
         Object.assign(state, config.settings); 
         syncLayoutControls();
         dom.colorGlobal.value = state.globalColor;
-        state.perCharSpacing = state.perCharSpacing || {};
+        if (!state.characterAdjustments && state.perCharSpacing) {
+          state.characterAdjustments = Object.fromEntries(Object.entries(state.perCharSpacing).map(([ch, spacing]) => [ch, {size: 0, spacing, x: 0, y: 0}]));
+        }
+        state.characterAdjustments = state.characterAdjustments || {};
         $('randomColorPool').value = state.randomPool || 30;
         syncTargetScope();
         renderSingleSpacingList();
@@ -1785,20 +1887,34 @@ bindSlider('rngLineHeight', 'valLineHeight', 'lineHeight', formatPercentDelta);
 
 dom.colorGlobal.addEventListener('input', (e) => { state.globalColor = e.target.value; schedulePreviewRender(); });
 dom.colorGlobal.addEventListener('change', (e) => { state.globalColor = e.target.value; renderPreview(); });
-$('txtPreview').addEventListener('input', () => { state.previewText = $('txtPreview').value; schedulePreviewRender(); });
+let previewTextTimer = 0;
+$('txtPreview').addEventListener('input', () => {
+  state.previewText = $('txtPreview').value;
+  clearTimeout(previewTextTimer);
+  previewTextTimer = setTimeout(() => schedulePreviewRender(true), 90);
+});
 
 // ==================== ★ Canvas 清晰度引擎与渲染 ★ ====================
-function getSafeAdvanceWidth(font, ch, fontSize) {
+function getGlyphMetrics(font, ch, fontSize) {
+  const fallback = {advance: fontSize * 0.62, left: 0, right: fontSize * 0.58};
+  if (!font) return fallback;
   try {
-      const width = font.getAdvanceWidth(ch, fontSize);
-      const glyph = font.charToGlyph(ch);
-      const unitsPerEm = font.unitsPerEm || 1000;
-      const outlineWidth = glyph && Number.isFinite(glyph.xMax) && Number.isFinite(glyph.xMin)
-        ? (glyph.xMax - Math.min(0, glyph.xMin)) * fontSize / unitsPerEm
-        : 0;
-      const safeWidth = Math.max(width, outlineWidth + fontSize * 0.025);
-      return Number.isFinite(safeWidth) && safeWidth > 0 ? safeWidth : fontSize * 0.6;
-  } catch (e) { return fontSize * 0.6; }
+    const unitsPerEm = font.unitsPerEm || 1000;
+    const glyph = font.charToGlyph(ch);
+    const box = glyph && glyph.getBoundingBox ? glyph.getBoundingBox() : null;
+    const left = box && Number.isFinite(box.x1) ? box.x1 * fontSize / unitsPerEm : 0;
+    const right = box && Number.isFinite(box.x2) ? box.x2 * fontSize / unitsPerEm : fontSize * 0.58;
+    const rawAdvance = font.getAdvanceWidth(ch, fontSize);
+    const outlineAdvance = right - Math.min(0, left) + fontSize * 0.035;
+    const advance = Math.max(Number.isFinite(rawAdvance) ? rawAdvance : 0, outlineAdvance, fontSize * 0.12);
+    return {advance, left, right};
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function getSafeAdvanceWidth(font, ch, fontSize) {
+  return getGlyphMetrics(font, ch, fontSize).advance;
 }
 
 function getKerningOffset(font, previousChar, ch, fontSize) {
@@ -1816,39 +1932,61 @@ function getKerningOffset(font, previousChar, ch, fontSize) {
 
 function buildTextLines(text, font, fontSize, spacing, wrapWidth, includeCustomGlyphs) {
   const lines = [];
+  const widths = [];
   let line = [];
-  let width = 0;
+  let cursor = 0;
+  let visualRight = -Infinity;
   let previousChar = '';
+
+  const finishLine = () => {
+    const trailing = line.length ? line[line.length - 1].after : 0;
+    const contentWidth = line.length ? Math.max(cursor - trailing, visualRight) : 0;
+    lines.push(line);
+    widths.push(Math.max(0, contentWidth));
+    line = [];
+    cursor = 0;
+    visualRight = -Infinity;
+    previousChar = '';
+  };
+
   for (const ch of [...text]) {
-    if (ch === '\n') {
-      lines.push(line);
-      line = [];
-      width = 0;
-      previousChar = '';
-      continue;
-    }
+    if (ch === '\n') { finishLine(); continue; }
     const custom = includeCustomGlyphs ? (state.drawnGlyphs[ch] || state.glyphImages[ch]) : null;
-    const glyphWidth = custom ? fontSize * (custom.spacing || 1) : getSafeAdvanceWidth(font, ch, fontSize);
-    const kerning = custom ? 0 : getKerningOffset(font, previousChar, ch, fontSize);
-    const characterSpacing = includeCustomGlyphs ? fontSize * (Number(state.perCharSpacing[ch]) || 0) / 100 : 0;
-    const after = spacing + characterSpacing;
-    const nextWidth = line.length ? width + kerning + glyphWidth : glyphWidth;
-    if (line.length && nextWidth > wrapWidth) {
-      lines.push(line);
-      line = [];
-      width = 0;
-      previousChar = '';
+    const adjustment = includeCustomGlyphs ? normalizedCharacterAdjustment(state.characterAdjustments[ch]) : normalizedCharacterAdjustment();
+    const sizeScale = Math.max(0.1, 1 + adjustment.size / 100);
+    const drawSize = fontSize * sizeScale;
+    const metrics = custom
+      ? {advance: drawSize * (custom.spacing || 1), left: 0, right: drawSize}
+      : getGlyphMetrics(font, ch, drawSize);
+    const xOffset = includeCustomGlyphs ? fontSize * adjustment.x / 100 : 0;
+    const yOffset = includeCustomGlyphs ? fontSize * adjustment.y / 100 : 0;
+    const after = spacing + (includeCustomGlyphs ? fontSize * adjustment.spacing / 100 : 0);
+    let kern = line.length && !custom ? getKerningOffset(font, previousChar, ch, drawSize) : 0;
+    let origin = cursor + kern;
+    const minimumGap = Math.max(1.5, fontSize * 0.045);
+    const allowsOverlap = spacing < 0 || (line.length && line[line.length - 1].after < 0);
+    if (line.length && !allowsOverlap) {
+      const currentLeft = origin + xOffset + metrics.left;
+      if (currentLeft < visualRight + minimumGap) {
+        const collisionCorrection = visualRight + minimumGap - currentLeft;
+        kern += collisionCorrection;
+        origin += collisionCorrection;
+      }
     }
-    const effectiveKerning = line.length ? kerning : 0;
-    line.push({ ch, w: glyphWidth, kern: effectiveKerning, after });
-    width = line.length === 1 ? glyphWidth + after : width + effectiveKerning + glyphWidth + after;
+    const projectedRight = Math.max(origin + xOffset + metrics.right, origin + metrics.advance);
+    if (line.length && projectedRight > wrapWidth) {
+      finishLine();
+      kern = 0;
+      origin = 0;
+    }
+    const item = {ch, w: metrics.advance, kern, after, drawSize, xOffset, yOffset};
+    line.push(item);
+    cursor = origin + metrics.advance + after;
+    visualRight = Math.max(origin + xOffset + metrics.right, cursor - after);
     previousChar = ch;
   }
-  if (line.length || !lines.length) lines.push(line);
-  return {
-    lines,
-    widths: lines.map(items => items.reduce((sum, item, index) => sum + item.w + item.after + (index ? item.kern : 0), 0) - (items.length ? items[items.length - 1].after : 0)),
-  };
+  if (line.length || !lines.length) finishLine();
+  return {lines, widths};
 }
 
 const imageCache = {}; 
@@ -1868,7 +2006,7 @@ function renderPreview() {
     ctx.fillText('尚未加载字体，请点击顶部按钮导入', 200, 50); return;
   }
   
-  const fontSize = state.previewFontSize || 46;
+  const fontSize = state.previewFontSize || 34;
   const previewScale = Math.max(0.01, 1 + state.fontSize / 100);
   const renderFontSize = Math.max(1, fontSize * previewScale);
   const letterSpacing = Math.round(fontSize * state.letterSpacing / 100);
@@ -1882,19 +2020,20 @@ function renderPreview() {
   const originalLineHeightPx = fontSize * 1.25;
   const originalLayout = buildTextLines(text, state.originalFont || state.font, fontSize, 0, wrapWidth, false);
   const widestLine = Math.max(...lineWidths, ...originalLayout.widths, 300);
-  const exactMaxWidth = Math.min(widestLine, wrapWidth);
   const totalLines = lineGroups.length || 1; const lineHeightPx = renderFontSize * lineHeight;
   const textBlockHeight = totalLines * lineHeightPx; const sectionHeight = textBlockHeight + padding;
   
-  const canvasWidth = Math.max(300, Math.min(exactMaxWidth + padding * 2, (dom.canvasWrap.clientWidth || exactMaxWidth + padding * 2) - 8)); 
+  const canvasWidth = Math.max(300, (dom.canvasWrap.clientWidth || widestLine + padding * 2) - 8);
   const originalSectionHeight = originalLayout.lines.length * originalLineHeightPx + padding;
   const canvasHeight = Math.max(sectionHeight + originalSectionHeight + padding, 200);
 
-  canvas.width = canvasWidth * ratio; 
-  canvas.height = canvasHeight * ratio; 
+  const pixelWidth = Math.max(1, Math.round(canvasWidth * ratio));
+  const pixelHeight = Math.max(1, Math.round(canvasHeight * ratio));
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
   canvas.style.width = canvasWidth + 'px';
   canvas.style.height = canvasHeight + 'px';
-  ctx.scale(ratio, ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   
   ctx.font = '13px sans-serif'; ctx.fillStyle = '#9CA3AF'; ctx.textAlign = 'center'; 
@@ -1909,14 +2048,16 @@ function renderPreview() {
       const color = colorForChar(ch);
       const drawnInfo = state.drawnGlyphs[ch]; const imageInfo = state.glyphImages[ch];
       
+      const drawX = x + item.xOffset;
+      const drawY = y - item.yOffset;
       if (drawnInfo) {
-          drawGlyphImageFromInfo(ctx, drawnInfo, x, y - renderFontSize, renderFontSize);
+          drawGlyphImageFromInfo(ctx, drawnInfo, drawX, drawY - item.drawSize, item.drawSize);
       } else if (imageInfo) {
-          drawGlyphImageFromInfo(ctx, imageInfo, x, y - renderFontSize, renderFontSize);
+          drawGlyphImageFromInfo(ctx, imageInfo, drawX, drawY - item.drawSize, item.drawSize);
       } else if (state.font) {
-          drawFontGlyph(ctx, ch, x, y, renderFontSize, color, baselineOffset);
+          drawFontGlyph(ctx, ch, drawX, drawY, item.drawSize, color, baselineOffset);
       } else {
-          ctx.fillStyle = color; ctx.font = `${renderFontSize}px sans-serif`; ctx.fillText(ch, x, y);
+          ctx.fillStyle = color; ctx.font = `${item.drawSize}px sans-serif`; ctx.fillText(ch, drawX, drawY);
       }
       x += item.w + item.after;
     }
@@ -2785,18 +2926,22 @@ window.receiveNativeFontResult = function(result) {
 };
 
 function hasPendingLayoutAdjust() {
+  return hasGlobalLayoutAdjust() ||
+    Object.keys(state.characterAdjustments || {}).length > 0;
+}
+
+function hasGlobalLayoutAdjust() {
   return Math.abs(state.fontSize) > 0.01 ||
     Math.abs(state.fontWeight) > 0.01 ||
     Math.abs(state.letterSpacing) > 0.01 ||
     Math.abs(state.baselineOffset) > 0.01 ||
-    Math.abs(state.lineHeight) > 0.01 ||
-    Object.keys(state.perCharSpacing || {}).length > 0;
+    Math.abs(state.lineHeight) > 0.01;
 }
 
 async function applyNativeLayoutAdjust(showProgress = true) {
   if (!state.font || !state.fontBuffer) throw new Error('未检测到导入的字体');
   if (!hasPendingLayoutAdjust()) return state.fontBuffer;
-  if (!state.targetAll && !state.targetChars.trim()) throw new Error('请输入需要调整的指定字符');
+  if (hasGlobalLayoutAdjust() && !state.targetAll && !state.targetChars.trim()) throw new Error('请输入需要调整的指定字符');
   if (showProgress) {
     dom.exportModal.classList.add('show');
     dom.exportProgressBar.style.width = '25%';
@@ -2812,7 +2957,7 @@ async function applyNativeLayoutAdjust(showProgress = true) {
     rise: state.baselineOffset,
     targetAll: state.targetAll,
     chars: state.targetChars,
-    characterSpacing: state.perCharSpacing
+    characterAdjustments: state.characterAdjustments
   });
   const parsed = opentype.parse(processed);
   await loadAndRegisterFont(processed, 'current');

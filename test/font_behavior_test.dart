@@ -55,12 +55,27 @@ void main() {
     expect(nativeProcessor, contains('writeUInt16(&out, 4, UInt16(value))'));
   });
 
-  test('per-character spacing is previewed and sent to the native engine', () {
-    expect(toolHtml, contains('id="singleSpacingChars"'));
-    expect(toolHtml, contains('id="singleSpacingValue"'));
-    expect(toolHtml, contains('perCharSpacing: {}'));
-    expect(toolHtml, contains('characterSpacing: state.perCharSpacing'));
-    expect(nativeProcessor, contains('glyphSpacingPercent'));
+  test(
+    'per-character adjustments are previewed and sent to the native engine',
+    () {
+      expect(toolHtml, contains('id="singleAdjustChar"'));
+      expect(toolHtml, contains('id="rngSingleSize"'));
+      expect(toolHtml, contains('id="rngSingleSpacing"'));
+      expect(toolHtml, contains('id="rngSingleX"'));
+      expect(toolHtml, contains('id="rngSingleY"'));
+      expect(toolHtml, contains('characterAdjustments: {}'));
+      expect(
+        toolHtml,
+        contains('characterAdjustments: state.characterAdjustments'),
+      );
+      expect(nativeProcessor, contains('glyphAdjustments'));
+    },
+  );
+
+  test('preview uses outline bounds and a smaller default size', () {
+    expect(toolHtml, contains('previewFontSize: 34'));
+    expect(toolHtml, contains('glyph.getBoundingBox()'));
+    expect(toolHtml, contains('collisionCorrection'));
   });
 
   test('random color values default to thirty', () {

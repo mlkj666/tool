@@ -172,8 +172,14 @@ import UniformTypeIdentifiers
       result(FlutterError(code: "bad_args", message: "字体数据无效", details: nil))
       return
     }
-      let characterSpacing = (args["characterSpacing"] as? [String: Any])?.reduce(into: [String: Double]()) { result, entry in
-        if let value = entry.value as? NSNumber { result[entry.key] = value.doubleValue }
+      let characterAdjustments = (args["characterAdjustments"] as? [String: Any])?.reduce(into: [String: NativeGlyphAdjustment]()) { result, entry in
+        guard let values = entry.value as? [String: Any] else { return }
+        result[entry.key] = NativeGlyphAdjustment(
+          size: (values["size"] as? NSNumber)?.doubleValue ?? 0,
+          spacing: (values["spacing"] as? NSNumber)?.doubleValue ?? 0,
+          x: (values["x"] as? NSNumber)?.doubleValue ?? 0,
+          y: (values["y"] as? NSNumber)?.doubleValue ?? 0
+        )
       } ?? [:]
       let params = NativeFontAdjustParams(
         size: args["size"] as? Double ?? 0,
@@ -183,7 +189,7 @@ import UniformTypeIdentifiers
         rise: args["rise"] as? Double ?? 0,
         targetAll: args["targetAll"] as? Bool ?? true,
         chars: args["chars"] as? String ?? "",
-        characterSpacing: characterSpacing
+        characterAdjustments: characterAdjustments
     )
     fontProcessingQueue.async {
       do {
@@ -210,6 +216,13 @@ import UniformTypeIdentifiers
   }
 }
 
+private struct NativeGlyphAdjustment {
+  let size: Double
+  let spacing: Double
+  let x: Double
+  let y: Double
+}
+
 private struct NativeFontAdjustParams {
   let size: Double
   let weight: Double
@@ -218,7 +231,7 @@ private struct NativeFontAdjustParams {
   let rise: Double
   let targetAll: Bool
   let chars: String
-  let characterSpacing: [String: Double]
+  let characterAdjustments: [String: NativeGlyphAdjustment]
 }
 
 private enum NativeFontError: LocalizedError {
@@ -242,7 +255,7 @@ private struct FontTable {
 }
 
 private final class NativeTTFProcessor {
-  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil, glyphSpacingPercent: [Int: Double] = [:]) throws -> Data {
+  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil, glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]) throws -> Data {
     var tables = try NativeTTFProcessor.readTables(data)
     guard let head = tables["head"], let maxp = tables["maxp"], let loca = tables["loca"], let glyf = tables["glyf"] else {
       throw NativeFontError.unsupportedFont
@@ -256,8 +269,9 @@ private final class NativeTTFProcessor {
     let globalYMid = hhea.map { Double(Int(readInt16($0, 4)) + Int(readInt16($0, 6))) * 0.5 } ?? 0
 
     var averageBolden = 0.0
-    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 {
-      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs)
+    let hasIndividualTransforms = glyphAdjustments.values.contains { abs($0.size) > 0.001 || abs($0.x) > 0.001 || abs($0.y) > 0.001 }
+    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 || hasIndividualTransforms {
+      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, upm: upm)
       if let patched {
         tables["glyf"]?.data = patched.glyf
         tables["loca"]?.data = patched.loca
@@ -266,9 +280,9 @@ private final class NativeTTFProcessor {
       }
     }
 
-    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001 || !glyphSpacingPercent.isEmpty,
+    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001 || !glyphAdjustments.isEmpty,
        let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphSpacingPercent: glyphSpacingPercent, upm: upm)
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, upm: upm)
       tables["hmtx"]?.data = patchedHmtx
       tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
     }
@@ -314,7 +328,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], upm: Int) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -341,7 +355,14 @@ private final class NativeTTFProcessor {
       var end = min(max(0, offsets[i + 1]), glyf.count)
       if start > end { swap(&start, &end) }
       var chunk = Data(glyf[start..<end])
-      if (selectedGlyphs == nil || selectedGlyphs!.contains(i)), let transformed = transformSimpleGlyph(chunk, scale: scale, riseUnits: riseUnits, weightPercent: weightPercent, globalYMid: globalYMid) {
+      let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
+      let adjustment = glyphAdjustments[i]
+      let individualScale = max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
+      let effectiveScale = (selected ? scale : 1.0) * individualScale
+      let effectiveRise = (selected ? riseUnits : 0) + Int(round((adjustment?.y ?? 0) / 100.0 * Double(upm)))
+      let xOffset = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
+      let effectiveWeight = selected ? weightPercent : 0
+      if (selected || adjustment != nil), let transformed = transformSimpleGlyph(chunk, scale: effectiveScale, riseUnits: effectiveRise, xOffsetUnits: xOffset, weightPercent: effectiveWeight, globalYMid: globalYMid) {
         chunk = transformed.data
         if abs(transformed.boldenUnits) > 0.001 {
           boldenTotal += transformed.boldenUnits
@@ -388,11 +409,11 @@ private final class NativeTTFProcessor {
     return (newGlyf, newLoca, newHead, boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0)
   }
 
-  private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double) -> (data: Data, boldenUnits: Double)? {
+  private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, xOffsetUnits: Int, weightPercent: Double, globalYMid: Double) -> (data: Data, boldenUnits: Double)? {
     guard chunk.count >= 10 else { return nil }
     let contours = Int(readInt16(chunk, 0))
     if contours < 0 {
-      guard let data = transformCompositeGlyph(chunk, scale: scale, riseUnits: riseUnits, globalYMid: globalYMid) else { return nil }
+      guard let data = transformCompositeGlyph(chunk, scale: scale, riseUnits: riseUnits, xOffsetUnits: xOffsetUnits, globalYMid: globalYMid) else { return nil }
       return (data, 0)
     }
     if contours == 0 { return nil }
@@ -464,7 +485,7 @@ private final class NativeTTFProcessor {
       )
       for i in contourStart...contourEnd {
         let offset = adjusted[i - contourStart]
-        xs[i] = clampInt16(Int(round(Double(xs[i]) * scale + offset.x)))
+        xs[i] = clampInt16(Int(round(Double(xs[i]) * scale + offset.x)) + xOffsetUnits)
         ys[i] = clampInt16(Int(round(globalYMid + (Double(ys[i]) - globalYMid) * scale + offset.y + Double(riseUnits))))
         minX = min(minX, xs[i]); maxX = max(maxX, xs[i])
         minY = min(minY, ys[i]); maxY = max(maxY, ys[i])
@@ -493,7 +514,7 @@ private final class NativeTTFProcessor {
     return (out, boldenUnits)
   }
 
-  private static func transformCompositeGlyph(_ chunk: Data, scale: Double, riseUnits: Int, globalYMid: Double) -> Data? {
+  private static func transformCompositeGlyph(_ chunk: Data, scale: Double, riseUnits: Int, xOffsetUnits: Int, globalYMid: Double) -> Data? {
     guard chunk.count >= 14 else { return nil }
     let arg1And2AreWords: UInt16 = 0x0001
     let argsAreXYValues: UInt16 = 0x0002
@@ -507,8 +528,8 @@ private final class NativeTTFProcessor {
     let oldMinY = Int(readInt16(chunk, 4))
     let oldMaxX = Int(readInt16(chunk, 6))
     let oldMaxY = Int(readInt16(chunk, 8))
-    let newMinX = clampInt16(Int(round(Double(oldMinX) * scale)))
-    let newMaxX = clampInt16(Int(round(Double(oldMaxX) * scale)))
+    let newMinX = clampInt16(Int(round(Double(oldMinX) * scale)) + xOffsetUnits)
+    let newMaxX = clampInt16(Int(round(Double(oldMaxX) * scale)) + xOffsetUnits)
     let newMinY = clampInt16(Int(round(globalYMid + (Double(oldMinY) - globalYMid) * scale + Double(riseUnits))))
     let newMaxY = clampInt16(Int(round(globalYMid + (Double(oldMaxY) - globalYMid) * scale + Double(riseUnits))))
 
@@ -576,7 +597,7 @@ private final class NativeTTFProcessor {
       }
 
       if hasXYArgs {
-        arg1 = Int(round(Double(arg1) * scale))
+        arg1 = Int(round(Double(arg1) * scale)) + xOffsetUnits
         arg2 = Int(round(Double(arg2) * scale)) + riseUnits
       }
 
@@ -597,23 +618,25 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?, glyphSpacingPercent: [Int: Double], upm: Int) -> Data {
+  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], upm: Int) -> Data {
     guard hhea.count >= 36 else { return hmtx }
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var out = hmtx
     for i in 0..<count {
       let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
-      let characterSpacingUnits = Int(round((glyphSpacingPercent[i] ?? 0) / 100.0 * Double(upm)))
-      if !selected && characterSpacingUnits == 0 { continue }
+      let adjustment = glyphAdjustments[i]
+      let characterSpacingUnits = Int(round((adjustment?.spacing ?? 0) / 100.0 * Double(upm)))
+      if !selected && adjustment == nil { continue }
       let p = i * 4
       let oldWidth = Int(readUInt16(out, p))
-      let appliedScale = selected ? scale : 1.0
+      let appliedScale = (selected ? scale : 1.0) * max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
       let appliedBolden = selected ? boldenUnits : 0
       let appliedSpacing = selected ? spacingUnits : 0
       let width = Int(round(Double(oldWidth) * appliedScale + appliedBolden)) + appliedSpacing + characterSpacingUnits
       writeUInt16(&out, p, UInt16(max(0, min(65535, width))))
       let oldBearing = Int(readInt16(out, p + 2))
-      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * appliedScale - appliedBolden * 0.5)))
+      let xOffsetUnits = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
+      writeInt16(&out, p + 2, Int(round(Double(oldBearing) * appliedScale - appliedBolden * 0.5)) + xOffsetUnits)
     }
     return out
   }
@@ -878,8 +901,8 @@ private final class NativeTTFProcessor {
 
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterSpacing: params.characterSpacing)
-    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphSpacingPercent: converted.glyphSpacingPercent)
+    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments)
+    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
   }
 }
 
@@ -991,7 +1014,7 @@ private final class PathCollector {
 }
 
 private enum CoreTextOutlineConverter {
-  static func convert(data: Data, selectedCharacters: String, characterSpacing: [String: Double]) throws -> (data: Data, selectedGlyphs: Set<Int>, glyphSpacingPercent: [Int: Double]) {
+  static func convert(data: Data, selectedCharacters: String, characterAdjustments: [String: NativeGlyphAdjustment]) throws -> (data: Data, selectedGlyphs: Set<Int>, glyphAdjustments: [Int: NativeGlyphAdjustment]) {
     guard let provider = CGDataProvider(data: data as CFData),
           let cgFont = CGFont(provider) else {
       throw NativeFontError.unsupportedFont
@@ -1004,9 +1027,9 @@ private enum CoreTextOutlineConverter {
     let unitsPerEm = max(1, Int(cgFont.unitsPerEm))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(unitsPerEm), nil, nil)
     let selectedGlyphs = glyphIDs(for: selectedCharacters, font: ctFont)
-    var glyphSpacingPercent: [Int: Double] = [:]
-    for (characters, percent) in characterSpacing {
-      for glyph in glyphIDs(for: characters, font: ctFont) { glyphSpacingPercent[glyph] = percent }
+    var glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]
+    for (characters, adjustment) in characterAdjustments {
+      for glyph in glyphIDs(for: characters, font: ctFont) { glyphAdjustments[glyph] = adjustment }
     }
     var offsets: [Int] = [0]
     var glyf = Data()
@@ -1069,7 +1092,7 @@ private enum CoreTextOutlineConverter {
     tables["maxp"] = FontTable(tag: "maxp", checksum: 0, data: newMaxp)
     tables["glyf"] = FontTable(tag: "glyf", checksum: 0, data: glyf)
     tables["loca"] = FontTable(tag: "loca", checksum: 0, data: loca)
-    return (NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000), selectedGlyphs, glyphSpacingPercent)
+    return (NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000), selectedGlyphs, glyphAdjustments)
   }
 
   private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
