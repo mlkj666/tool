@@ -3,10 +3,12 @@ import CoreText
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
+import Vision
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
   private var pendingImageResult: FlutterResult?
+  private var pendingFontResult: FlutterResult?
   private var pendingSaveResult: FlutterResult?
   private var exportUrl: URL?
   private let fontProcessingQueue = DispatchQueue(label: "icu.uxgzs.tool.font-processing", qos: .userInitiated)
@@ -32,6 +34,8 @@ import UniformTypeIdentifiers
         let args = call.arguments as? [String: Any]
         let source = args?["source"] as? String ?? "photo"
         self.pickImages(source: source, result: result)
+      case "pickFont":
+        self.pickFont(result: result)
       case "saveFont":
         self.saveFont(arguments: call.arguments, result: result)
       case "processFont":
@@ -165,6 +169,18 @@ import UniformTypeIdentifiers
     topViewController()?.present(picker, animated: true)
   }
 
+  private func pickFont(result: @escaping FlutterResult) {
+    guard pendingFontResult == nil else {
+      result(FlutterError(code: "busy", message: "正在处理上一次字体选择", details: nil))
+      return
+    }
+    pendingFontResult = result
+    let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.font], asCopy: true)
+    picker.delegate = self
+    picker.allowsMultipleSelection = false
+    topViewController()?.present(picker, animated: true)
+  }
+
   private func processFont(arguments: Any?, result: @escaping FlutterResult) {
     guard let args = arguments as? [String: Any],
           let base64 = args["base64"] as? String,
@@ -181,6 +197,9 @@ import UniformTypeIdentifiers
           y: (values["y"] as? NSNumber)?.doubleValue ?? 0
         )
       } ?? [:]
+      let replacements = (args["replacements"] as? [String: String])?.reduce(into: [String: Data]()) { result, entry in
+        if let data = Data(base64Encoded: entry.value) { result[entry.key] = data }
+      } ?? [:]
       let params = NativeFontAdjustParams(
         size: args["size"] as? Double ?? 0,
         weight: args["weight"] as? Double ?? 0,
@@ -189,8 +208,9 @@ import UniformTypeIdentifiers
         rise: args["rise"] as? Double ?? 0,
         targetAll: args["targetAll"] as? Bool ?? true,
         chars: args["chars"] as? String ?? "",
-        characterAdjustments: characterAdjustments
-    )
+        characterAdjustments: characterAdjustments,
+        replacements: replacements
+      )
     fontProcessingQueue.async {
       do {
         let processed = try NativeOutlineFontProcessor.adjust(data: data, params: params)
@@ -204,12 +224,29 @@ import UniformTypeIdentifiers
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    pendingFontResult?(nil)
+    pendingFontResult = nil
     pendingSaveResult?(nil)
     pendingSaveResult = nil
     exportUrl = nil
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    if pendingFontResult != nil {
+      guard let url = urls.first else {
+        pendingFontResult?(nil)
+        pendingFontResult = nil
+        return
+      }
+      do {
+        let data = try Data(contentsOf: url)
+        pendingFontResult?(["name": url.lastPathComponent, "base64": data.base64EncodedString()])
+      } catch {
+        pendingFontResult?(FlutterError(code: "read_failed", message: error.localizedDescription, details: nil))
+      }
+      pendingFontResult = nil
+      return
+    }
     pendingSaveResult?(true)
     pendingSaveResult = nil
     exportUrl = nil
@@ -232,6 +269,7 @@ private struct NativeFontAdjustParams {
   let targetAll: Bool
   let chars: String
   let characterAdjustments: [String: NativeGlyphAdjustment]
+  let replacements: [String: Data]
 }
 
 private enum NativeFontError: LocalizedError {
@@ -901,7 +939,7 @@ private final class NativeTTFProcessor {
 
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments)
+    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments, replacements: params.replacements)
     return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
   }
 }
@@ -910,6 +948,45 @@ private struct OutlinePoint {
   var x: Int
   var y: Int
   var onCurve: Bool
+}
+
+private enum RasterGlyphConverter {
+  static func contours(from data: Data, unitsPerEm: Int) throws -> [[OutlinePoint]] {
+    guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
+    let size = CGSize(width: 512, height: 512)
+    let renderer = UIGraphicsImageRenderer(size: size)
+    let flattened = renderer.image { context in
+      UIColor.white.setFill()
+      context.fill(CGRect(origin: .zero, size: size))
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
+    guard let source = flattened.cgImage else { throw NativeFontError.malformedFont }
+    let request = VNDetectContoursRequest()
+    request.contrastAdjustment = 1.2
+    request.detectsDarkOnLight = true
+    request.maximumImageDimension = 512
+    try VNImageRequestHandler(cgImage: source).perform([request])
+    guard let observation = request.results?.first else { return [] }
+    let inset = Double(unitsPerEm) * 0.08
+    let body = Double(unitsPerEm) - inset * 2
+    var output: [[OutlinePoint]] = []
+    func append(_ contour: VNContour, depth: Int) {
+      var points = Array(contour.normalizedPoints)
+      if depth.isMultiple(of: 2) == false { points.reverse() }
+      if points.count >= 3 {
+        output.append(points.map { point in
+        OutlinePoint(
+          x: Int(round(inset + Double(point.x) * body)),
+          y: Int(round(inset + Double(point.y) * body)),
+          onCurve: true
+        )
+        })
+      }
+      for child in contour.childContours { append(child, depth: depth + 1) }
+    }
+    for contour in observation.topLevelContours { append(contour, depth: 0) }
+    return output
+  }
 }
 
 private final class PathCollector {
@@ -1014,7 +1091,7 @@ private final class PathCollector {
 }
 
 private enum CoreTextOutlineConverter {
-  static func convert(data: Data, selectedCharacters: String, characterAdjustments: [String: NativeGlyphAdjustment]) throws -> (data: Data, selectedGlyphs: Set<Int>, glyphAdjustments: [Int: NativeGlyphAdjustment]) {
+  static func convert(data: Data, selectedCharacters: String, characterAdjustments: [String: NativeGlyphAdjustment], replacements: [String: Data]) throws -> (data: Data, selectedGlyphs: Set<Int>, glyphAdjustments: [Int: NativeGlyphAdjustment]) {
     guard let provider = CGDataProvider(data: data as CFData),
           let cgFont = CGFont(provider) else {
       throw NativeFontError.unsupportedFont
@@ -1031,6 +1108,11 @@ private enum CoreTextOutlineConverter {
     for (characters, adjustment) in characterAdjustments {
       for glyph in glyphIDs(for: characters, font: ctFont) { glyphAdjustments[glyph] = adjustment }
     }
+    var replacementContours: [Int: [[OutlinePoint]]] = [:]
+    for (characters, imageData) in replacements {
+      let contours = try RasterGlyphConverter.contours(from: imageData, unitsPerEm: unitsPerEm)
+      for glyph in glyphIDs(for: characters, font: ctFont) { replacementContours[glyph] = contours }
+    }
     var offsets: [Int] = [0]
     var glyf = Data()
     var hmtx = Data()
@@ -1042,7 +1124,7 @@ private enum CoreTextOutlineConverter {
 
     for index in 0..<numGlyphs {
       let glyph = CGGlyph(index)
-      let contours = collectContours(CTFontCreatePathForGlyph(ctFont, glyph, nil))
+      let contours = replacementContours[index] ?? collectContours(CTFontCreatePathForGlyph(ctFont, glyph, nil))
       let encoded = encodeGlyph(contours)
       glyf.append(encoded.data)
       if glyf.count % 2 != 0 { glyf.append(0) }

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'native_tool_panel.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -166,7 +167,7 @@ class _AppGateState extends State<AppGate> {
     if (_booting) return const SplashView();
     final user = _user;
     if (user == null) return AuthScreen(onAuthenticated: _saveSession);
-    return ToolPanel(user: user, cookie: _cookie, onLogout: _logout);
+    return NativeToolPanel(user: user, cookie: _cookie, onLogout: _logout);
   }
 }
 

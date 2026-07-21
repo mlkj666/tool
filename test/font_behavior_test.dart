@@ -84,7 +84,10 @@ void main() {
 
   test('preview input and slider rendering stay stable', () {
     expect(toolHtml, contains('editingCanvasHeight'));
-    expect(toolHtml, contains('setTimeout(() => schedulePreviewRender(true), 220)'));
+    expect(
+      toolHtml,
+      contains('setTimeout(() => schedulePreviewRender(true), 220)'),
+    );
     expect(toolHtml, contains('32 - (performance.now() - lastPreviewRender)'));
     expect(toolHtml, contains('overflow-anchor: none'));
   });
