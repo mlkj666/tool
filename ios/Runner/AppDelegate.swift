@@ -1036,7 +1036,7 @@ private enum NativeOutlineFontProcessor {
 
 private enum NativeColorFontProcessor {
   static func apply(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let hasGlobal = params.globalColor.map { $0.uppercased() != "#000000" } ?? false
+    let hasGlobal = params.globalColor != nil
     let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
     let hasBitmaps = !params.replacements.isEmpty
     guard hasPalette || hasBitmaps else { return data }

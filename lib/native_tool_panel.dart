@@ -52,6 +52,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   final _targetCharsController = TextEditingController();
   final _colorCharsController = TextEditingController();
   Color _globalColor = Colors.black;
+  bool _globalColorEnabled = false;
   Color _selectedColor = const Color(0xFF2563EB);
   int _randomPoolSize = 30;
   final Map<String, Color> _characterColors = {};
@@ -251,7 +252,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             'replacements': _replacements.map(
               (key, value) => MapEntry(key, base64Encode(value)),
             ),
-            'globalColor': _hex(_globalColor),
+            'globalColor': _globalColorEnabled ? _hex(_globalColor) : null,
             'characterColors': _characterColors.map(
               (key, value) => MapEntry(key, _hex(value)),
             ),
@@ -321,6 +322,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         (key, value) => MapEntry(key, _hex(value)),
       ),
       'globalColor': _hex(_globalColor),
+      'globalColorEnabled': _globalColorEnabled,
       'randomColors': _randomPalette.map(_hex).toList(),
       'replacements': _replacements.map(
         (key, value) => MapEntry(key, base64Encode(value)),
@@ -392,6 +394,11 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         _globalColor = _parseColor(
           config['globalColor']?.toString() ?? '#000000',
         );
+        _globalColorEnabled =
+            config['globalColorEnabled'] == true ||
+            (config['globalColorEnabled'] == null &&
+                config['globalColor'] != null &&
+                config['globalColor'].toString().toUpperCase() != '#000000');
         _randomPalette
           ..clear()
           ..addAll(
@@ -548,6 +555,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       _randomPalette.clear();
       _replacements.clear();
       _globalColor = Colors.black;
+      _globalColorEnabled = false;
       _singleSize = _singleSpacing = _singleX = _singleY = 0;
     });
   }
@@ -590,46 +598,122 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       Color(0xFFDB2777),
       Color(0xFF64748B),
     ];
+    final controller = TextEditingController(text: _hex(initial));
+    String? errorText;
     await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: colors
-                .map(
-                  (color) => InkWell(
-                    onTap: () {
-                      onSelected(color);
-                      Navigator.pop(context);
-                    },
-                    borderRadius: BorderRadius.circular(24),
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: color,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: color == initial
-                              ? Colors.white
-                              : Colors.transparent,
-                          width: 3,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              18,
+              20,
+              18 + MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '选择颜色',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 14,
+                  children: colors
+                      .map(
+                        (color) => InkWell(
+                          onTap: () {
+                            onSelected(color);
+                            Navigator.pop(sheetContext);
+                          },
+                          customBorder: const CircleBorder(),
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: color.toARGB32() == initial.toARGB32()
+                                    ? const Color(0xFF111827)
+                                    : const Color(0xFFD1D5DB),
+                                width: color.toARGB32() == initial.toARGB32()
+                                    ? 3
+                                    : 1,
+                              ),
+                            ),
+                          ),
                         ),
-                        boxShadow: const [
-                          BoxShadow(color: Color(0x22000000), blurRadius: 5),
-                        ],
-                      ),
-                    ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  maxLength: 7,
+                  textCapitalization: TextCapitalization.characters,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F#]')),
+                  ],
+                  decoration: InputDecoration(
+                    labelText: '自定义色值',
+                    hintText: '#FF4D8D',
+                    prefixIcon: const Icon(Icons.tag),
+                    border: const OutlineInputBorder(),
+                    errorText: errorText,
+                    counterText: '',
                   ),
-                )
-                .toList(),
+                  onSubmitted: (_) {
+                    final color = _tryParseCustomColor(controller.text);
+                    if (color == null) {
+                      setSheetState(() => errorText = '请输入6位色值，例如 #FF4D8D');
+                      return;
+                    }
+                    onSelected(color);
+                    Navigator.pop(sheetContext);
+                  },
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () {
+                    final color = _tryParseCustomColor(controller.text);
+                    if (color == null) {
+                      setSheetState(() => errorText = '请输入6位色值，例如 #FF4D8D');
+                      return;
+                    }
+                    onSelected(color);
+                    Navigator.pop(sheetContext);
+                  },
+                  icon: const Icon(Icons.check),
+                  label: const Text('应用色值'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
+    controller.dispose();
+  }
+
+  Color? _tryParseCustomColor(String value) {
+    final hex = value.trim().replaceFirst('#', '');
+    if (!RegExp(r'^[0-9a-fA-F]{6}$').hasMatch(hex)) return null;
+    return Color(0xFF000000 | int.parse(hex, radix: 16));
+  }
+
+  void _setGlobalColor(Color color) {
+    setState(() {
+      _globalColor = color;
+      _globalColorEnabled = true;
+      _randomPalette.clear();
+    });
   }
 
   void _updateSingle(String key, double value) {
@@ -989,7 +1073,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             width: layoutWidth,
             child: OverflowBox(
               alignment: Alignment.centerLeft,
-              maxWidth: double.infinity,
+              minWidth: naturalWidth,
+              maxWidth: naturalWidth,
               child: child,
             ),
           ),
@@ -1181,12 +1266,24 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       ListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('全部字符颜色'),
-        trailing: _colorSwatch(
-          _globalColor,
-          () => _chooseColor(
-            initial: _globalColor,
-            onSelected: (color) => setState(() => _globalColor = color),
-          ),
+        subtitle: Text(_globalColorEnabled ? _hex(_globalColor) : '保持字体原始颜色'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_globalColorEnabled)
+              IconButton(
+                onPressed: () => setState(() => _globalColorEnabled = false),
+                tooltip: '恢复原始颜色',
+                icon: const Icon(Icons.refresh),
+              ),
+            _colorSwatch(
+              _globalColor,
+              () => _chooseColor(
+                initial: _globalColor,
+                onSelected: _setGlobalColor,
+              ),
+            ),
+          ],
         ),
       ),
       _sectionTitle('随机改色'),

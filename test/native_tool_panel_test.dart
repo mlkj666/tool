@@ -31,6 +31,10 @@ void main() {
     expect(panel, contains('RenderRepaintBoundary'));
     expect(panel, contains('_liveReplacementImage'));
     expect(panel, contains('_selectSingleCharacter'));
+    expect(panel, contains('_tryParseCustomColor'));
+    expect(panel, contains("labelText: '自定义色值'"));
+    expect(panel, contains('bool _globalColorEnabled = false'));
+    expect(panel, contains('minWidth: naturalWidth'));
     expect(
       panel,
       contains('naturalWidth + _spacing * .25 + characterSpacing * .2'),
@@ -59,6 +63,6 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.7+8'));
+    expect(pubspec, contains('version: 1.0.8+9'));
   });
 }
