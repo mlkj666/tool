@@ -29,14 +29,21 @@ void main() {
   test('image and drawing replacements reach the native outline engine', () {
     expect(panel, contains("'replacements': _replacements.map"));
     expect(panel, contains('RenderRepaintBoundary'));
+    expect(panel, contains('_liveReplacementImage'));
+    expect(panel, contains('_bindImportedImage(notify: false)'));
+    expect(panel, contains('Icons.remove_circle_outline'));
+    expect(panel, contains('Icons.add_circle_outline'));
+    expect(panel, contains('_accountLine'));
     expect(nativeEngine, contains('VNDetectContoursRequest'));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
+    expect(nativeEngine, contains('makeSbixTable'));
+    expect(nativeEngine, contains('imagesByGlyph'));
     expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.3+4'));
+    expect(pubspec, contains('version: 1.0.4+5'));
   });
 }

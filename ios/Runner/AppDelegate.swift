@@ -995,51 +995,98 @@ private enum NativeOutlineFontProcessor {
 
 private enum NativeColorFontProcessor {
   static func apply(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let hasGlobal = params.globalColor?.uppercased() != nil && params.globalColor?.uppercased() != "#000000"
-    guard hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty else { return data }
+    let hasGlobal = params.globalColor.map { $0.uppercased() != "#000000" } ?? false
+    let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
+    let hasBitmaps = !params.replacements.isEmpty
+    guard hasPalette || hasBitmaps else { return data }
     guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
     var tables = try NativeTTFProcessor.readTables(data)
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
-    var glyphColors: [Int: String] = [:]
-    if let global = params.globalColor, hasGlobal {
-      for glyph in 1..<glyphCount { glyphColors[glyph] = global }
+    if hasPalette {
+      var glyphColors: [Int: String] = [:]
+      if let global = params.globalColor, hasGlobal {
+        for glyph in 1..<glyphCount { glyphColors[glyph] = global }
+      }
+      if !params.randomColors.isEmpty {
+        for glyph in 1..<glyphCount { glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count] }
+      }
+      for (characters, color) in params.characterColors {
+        for glyph in glyphIDs(for: characters, font: ctFont) { glyphColors[glyph] = color }
+      }
+      if !glyphColors.isEmpty {
+        var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
+        var paletteIndex: [String: Int] = [:]
+        for color in Set(glyphColors.values).sorted() {
+          paletteIndex[color] = palette.count
+          palette.append(parseColor(color))
+        }
+        let sorted = glyphColors.keys.sorted()
+        var colr = Data()
+        appendUInt16(&colr, 0)
+        appendUInt16(&colr, UInt16(sorted.count))
+        appendUInt32(&colr, 14)
+        appendUInt32(&colr, UInt32(14 + sorted.count * 6))
+        appendUInt16(&colr, UInt16(sorted.count))
+        for (index, glyph) in sorted.enumerated() {
+          appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(index)); appendUInt16(&colr, 1)
+        }
+        for glyph in sorted {
+          appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(paletteIndex[glyphColors[glyph]!] ?? 0))
+        }
+        var cpal = Data()
+        appendUInt16(&cpal, 0); appendUInt16(&cpal, UInt16(palette.count)); appendUInt16(&cpal, 1)
+        appendUInt16(&cpal, UInt16(palette.count)); appendUInt32(&cpal, 14); appendUInt16(&cpal, 0)
+        for (red, green, blue, alpha) in palette { cpal.append(blue); cpal.append(green); cpal.append(red); cpal.append(alpha) }
+        tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: colr)
+        tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: cpal)
+      }
     }
-    if !params.randomColors.isEmpty {
-      for glyph in 1..<glyphCount { glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count] }
+    if hasBitmaps {
+      var imagesByGlyph: [Int: Data] = [:]
+      for (characters, imageData) in params.replacements {
+        for glyph in glyphIDs(for: characters, font: ctFont) { imagesByGlyph[glyph] = imageData }
+      }
+      if !imagesByGlyph.isEmpty {
+        tables["sbix"] = FontTable(
+          tag: "sbix",
+          checksum: 0,
+          data: makeSbixTable(glyphCount: glyphCount, imagesByGlyph: imagesByGlyph)
+        )
+      }
     }
-    for (characters, color) in params.characterColors {
-      for glyph in glyphIDs(for: characters, font: ctFont) { glyphColors[glyph] = color }
-    }
-    guard !glyphColors.isEmpty else { return data }
-
-    var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
-    var paletteIndex: [String: Int] = [:]
-    for color in Set(glyphColors.values).sorted() {
-      paletteIndex[color] = palette.count
-      palette.append(parseColor(color))
-    }
-    let sorted = glyphColors.keys.sorted()
-    var colr = Data()
-    appendUInt16(&colr, 0)
-    appendUInt16(&colr, UInt16(sorted.count))
-    appendUInt32(&colr, 14)
-    appendUInt32(&colr, UInt32(14 + sorted.count * 6))
-    appendUInt16(&colr, UInt16(sorted.count))
-    for (index, glyph) in sorted.enumerated() {
-      appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(index)); appendUInt16(&colr, 1)
-    }
-    for glyph in sorted {
-      appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(paletteIndex[glyphColors[glyph]!] ?? 0))
-    }
-    var cpal = Data()
-    appendUInt16(&cpal, 0); appendUInt16(&cpal, UInt16(palette.count)); appendUInt16(&cpal, 1)
-    appendUInt16(&cpal, UInt16(palette.count)); appendUInt32(&cpal, 14); appendUInt16(&cpal, 0)
-    for (red, green, blue, alpha) in palette { cpal.append(blue); cpal.append(green); cpal.append(red); cpal.append(alpha) }
-    tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: colr)
-    tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: cpal)
     return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+  }
+
+  private static func makeSbixTable(glyphCount: Int, imagesByGlyph: [Int: Data]) -> Data {
+    let safeCount = max(1, glyphCount)
+    let glyphDataStart = 4 + (safeCount + 1) * 4
+    var strike = Data()
+    appendUInt16(&strike, 512)
+    appendUInt16(&strike, 72)
+    var glyphData = Data()
+    var offsets: [UInt32] = []
+    offsets.reserveCapacity(safeCount + 1)
+    for glyph in 0..<safeCount {
+      offsets.append(UInt32(glyphDataStart + glyphData.count))
+      guard let image = imagesByGlyph[glyph], !image.isEmpty else { continue }
+      appendInt16(&glyphData, 0)
+      appendInt16(&glyphData, 0)
+      glyphData.append(contentsOf: [0x70, 0x6E, 0x67, 0x20])
+      glyphData.append(image)
+    }
+    offsets.append(UInt32(glyphDataStart + glyphData.count))
+    for offset in offsets { appendUInt32(&strike, offset) }
+    strike.append(glyphData)
+
+    var table = Data()
+    appendUInt16(&table, 1)
+    appendUInt16(&table, 0)
+    appendUInt32(&table, 1)
+    appendUInt32(&table, 12)
+    table.append(strike)
+    return table
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -1062,6 +1109,7 @@ private enum NativeColorFontProcessor {
 
   private static func readUInt16(_ data: Data, _ offset: Int) -> UInt16 { UInt16(data[offset]) << 8 | UInt16(data[offset + 1]) }
   private static func appendUInt16(_ data: inout Data, _ value: UInt16) { data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
+  private static func appendInt16(_ data: inout Data, _ value: Int16) { appendUInt16(&data, UInt16(bitPattern: value)) }
   private static func appendUInt32(_ data: inout Data, _ value: UInt32) { data.append(UInt8((value >> 24) & 255)); data.append(UInt8((value >> 16) & 255)); data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
 }
 

@@ -227,6 +227,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       _message('请先导入字体');
       return;
     }
+    if (_imageBytes != null && _replacementCharacter() != null) {
+      await _bindImportedImage(notify: false);
+    }
     setState(() => _busy = true);
     try {
       final response = await _channel
@@ -646,9 +649,12 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     return chars.isEmpty ? null : chars.first;
   }
 
-  Future<void> _bindImportedImage() async {
+  Future<void> _bindImportedImage({bool notify = true}) async {
     final char = _replacementCharacter();
-    if (char == null || _imageBytes == null) return _message('请输入目标字符并导入图片');
+    if (char == null || _imageBytes == null) {
+      if (notify) _message('请输入目标字符并导入图片');
+      return;
+    }
     final codec = await ui.instantiateImageCodec(_imageBytes!);
     final frame = await codec.getNextFrame();
     const side = 512.0;
@@ -686,7 +692,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         () => {'size': 0, 'spacing': 0, 'x': 0, 'y': 0},
       )['spacing'] = _imageSpacing;
     });
-    _message('图片已绑定到字符 $char');
+    if (notify) _message('图片已绑定到字符 $char');
   }
 
   Future<void> _bindDrawing() async {
@@ -737,14 +743,30 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(value)));
   }
 
+  String _accountLine() {
+    final username = widget.user.username.toString();
+    if (widget.user.role.toString() == 'admin') return '$username · 永久有效';
+    final expire = widget.user.expireTime?.toString().trim() ?? '';
+    return '$username · 到期 ${expire.isEmpty ? '未知' : expire}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
       appBar: AppBar(
-        title: const Text(
-          'BS字体修符',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        title: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('BS字体修符', style: TextStyle(fontWeight: FontWeight.w800)),
+            Text(
+              _accountLine(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
+            ),
+          ],
         ),
         actions: [
           IconButton(
@@ -908,25 +930,25 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         final size = (baseSize * (1 + (adjustment['size'] ?? 0) / 100))
             .clamp(6, 96)
             .toDouble();
-        final replacement = _replacements[char];
+        final liveImage =
+            _imageBytes != null && char == _replacementCharacter();
+        final replacement = liveImage ? _imageBytes : _replacements[char];
         final color =
             _characterColors[char] ??
             (_randomPalette.isNotEmpty
                 ? _randomPalette[char.codeUnitAt(0) % _randomPalette.length]
                 : _globalColor);
         final child = replacement != null
-            ? Image.memory(replacement, width: size, height: size)
+            ? liveImage
+                  ? _liveReplacementImage(replacement, size)
+                  : Image.memory(replacement, width: size, height: size)
             : Text(
                 char,
                 style: TextStyle(
                   fontFamily: _fontFamily,
                   fontSize: size,
                   color: color,
-                  fontWeight: FontWeight.lerp(
-                    FontWeight.w300,
-                    FontWeight.w900,
-                    ((_weight + 50) / 100).clamp(0, 1),
-                  ),
+                  fontWeight: _previewWeight(),
                 ),
               );
         return Transform.translate(
@@ -936,7 +958,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           ),
           child: Padding(
             padding: EdgeInsets.only(
-              right: max(0, (adjustment['spacing'] ?? 0) * .2),
+              right: max(
+                0,
+                (liveImage ? _imageSpacing : (adjustment['spacing'] ?? 0)) * .2,
+              ),
             ),
             child: child,
           ),
@@ -944,6 +969,39 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       }).toList(),
     );
   }
+
+  FontWeight _previewWeight() {
+    final value = _weight.clamp(-50, 50).toDouble();
+    if (value == 0) return FontWeight.w400;
+    if (value < 0) {
+      return FontWeight.lerp(FontWeight.w400, FontWeight.w100, -value / 50) ??
+          FontWeight.w400;
+    }
+    return FontWeight.lerp(FontWeight.w400, FontWeight.w900, value / 50) ??
+        FontWeight.w400;
+  }
+
+  Widget _liveReplacementImage(Uint8List bytes, double size) => SizedBox(
+    width: size,
+    height: size,
+    child: ClipRect(
+      child: Transform.translate(
+        offset: Offset(_imageX * size * 3 / 512, -_imageY * size * 3 / 512),
+        child: Transform.scale(
+          scale: _imageScale,
+          child: Image.memory(
+            bytes,
+            width: size,
+            height: size,
+            fit: BoxFit.fill,
+            filterQuality: _imageSmoothing
+                ? FilterQuality.high
+                : FilterQuality.none,
+          ),
+        ),
+      ),
+    ),
+  );
 
   Widget _fontControls() => ListView(
     key: const ValueKey('layout'),
@@ -1014,32 +1072,69 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     ],
   );
 
-  Widget _slider(String label, double value, ValueChanged<double> onChanged) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(
-          children: [
-            SizedBox(width: 62, child: Text(label)),
-            Expanded(
-              child: Slider(
-                value: value,
-                min: -50,
-                max: 50,
-                divisions: 100,
-                onChanged: onChanged,
-              ),
+  Widget _slider(
+    String label,
+    double value,
+    ValueChanged<double> onChanged, {
+    double min = -50,
+    double max = 50,
+    double step = 1,
+    String Function(double value)? valueLabel,
+  }) {
+    double stepped(double next) {
+      final snapped = (next / step).round() * step;
+      return snapped.clamp(min, max).toDouble();
+    }
+
+    final divisions = ((max - min) / step).round().clamp(1, 10000).toInt();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(width: 62, child: Text(label)),
+          IconButton(
+            onPressed: value > min
+                ? () => onChanged(stepped(value - step))
+                : null,
+            tooltip: '减少 $label',
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            iconSize: 18,
+            icon: const Icon(Icons.remove_circle_outline),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(min, max).toDouble(),
+              min: min,
+              max: max,
+              divisions: divisions,
+              onChanged: onChanged,
             ),
-            SizedBox(
-              width: 46,
-              child: Text(
-                '${value.round()}%',
-                textAlign: TextAlign.right,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
+          ),
+          IconButton(
+            onPressed: value < max
+                ? () => onChanged(stepped(value + step))
+                : null,
+            tooltip: '增加 $label',
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+            iconSize: 18,
+            icon: const Icon(Icons.add_circle_outline),
+          ),
+          SizedBox(
+            width: 48,
+            child: Text(
+              valueLabel?.call(value) ?? '${value.round()}%',
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
-          ],
-        ),
-      );
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _sectionTitle(String text) => Padding(
     padding: const EdgeInsets.only(top: 12, bottom: 8),
@@ -1066,20 +1161,13 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         ),
       ),
       _sectionTitle('随机改色'),
-      Row(
-        children: [
-          Expanded(
-            child: Slider(
-              value: _randomPoolSize.toDouble(),
-              min: 2,
-              max: 64,
-              divisions: 62,
-              onChanged: (value) =>
-                  setState(() => _randomPoolSize = value.round()),
-            ),
-          ),
-          Text('$_randomPoolSize 色值'),
-        ],
+      _slider(
+        '色值',
+        _randomPoolSize.toDouble(),
+        (value) => setState(() => _randomPoolSize = value.round()),
+        min: 2,
+        max: 64,
+        valueLabel: (value) => '${value.round()}色',
       ),
       Row(
         children: [
@@ -1190,6 +1278,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       TextField(
         controller: _replacementCharController,
         maxLength: 1,
+        onChanged: (_) => setState(() {}),
         decoration: const InputDecoration(
           labelText: '绑定字符',
           hintText: '输入一个字符',
@@ -1205,23 +1294,17 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       if (_imageBytes != null)
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Image.memory(_imageBytes!, height: 120, fit: BoxFit.contain),
+          child: Center(child: _liveReplacementImage(_imageBytes!, 120)),
         ),
       _sectionTitle('图片参数'),
-      Row(
-        children: [
-          const SizedBox(width: 62, child: Text('大小')),
-          Expanded(
-            child: Slider(
-              value: _imageScale,
-              min: .3,
-              max: 1.5,
-              divisions: 24,
-              onChanged: (value) => setState(() => _imageScale = value),
-            ),
-          ),
-          SizedBox(width: 46, child: Text('${(_imageScale * 100).round()}%')),
-        ],
+      _slider(
+        '大小',
+        _imageScale,
+        (value) => setState(() => _imageScale = value),
+        min: .3,
+        max: 1.5,
+        step: .05,
+        valueLabel: (value) => '${(value * 100).round()}%',
       ),
       _slider(
         '字距',
@@ -1262,6 +1345,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       TextField(
         controller: _replacementCharController,
         maxLength: 1,
+        onChanged: (_) => setState(() {}),
         decoration: const InputDecoration(
           labelText: '绑定字符',
           hintText: '输入一个字符',
@@ -1316,17 +1400,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
               onSelected: (color) => setState(() => _drawColor = color),
             ),
           ),
-          const SizedBox(width: 8),
-          const Text('笔刷'),
-          Expanded(
-            child: Slider(
-              value: _drawSize,
-              min: 1,
-              max: 24,
-              divisions: 23,
-              onChanged: (value) => setState(() => _drawSize = value),
-            ),
-          ),
+          const Spacer(),
           IconButton(
             onPressed: () => setState(() => _drawGrid = !_drawGrid),
             tooltip: '网格',
@@ -1336,6 +1410,14 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             ),
           ),
         ],
+      ),
+      _slider(
+        '笔刷',
+        _drawSize,
+        (value) => setState(() => _drawSize = value),
+        min: 1,
+        max: 24,
+        valueLabel: (value) => '${value.round()}',
       ),
       FilledButton.tonalIcon(
         onPressed: _bindDrawing,
