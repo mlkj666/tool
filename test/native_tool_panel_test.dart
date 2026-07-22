@@ -57,6 +57,8 @@ void main() {
     expect(nativeEngine, contains('finishImageRequest'));
     expect(nativeEngine, contains('cancelImageRequest'));
     expect(panel, contains('_bindImportedImage(notify: false)'));
+    expect(panel, contains('_prepareImportedImage'));
+    expect(panel, contains('_foregroundBounds'));
     expect(panel, contains('Icons.remove_circle_outline'));
     expect(panel, contains('Icons.add_circle_outline'));
     expect(panel, contains('_accountLine'));
@@ -69,12 +71,14 @@ void main() {
     expect(nativeEngine, contains('makeCPAL'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
     expect(nativeEngine, contains('imagesByGlyph'));
+    expect(nativeEngine, contains('grayscaleLayers'));
+    expect(nativeEngine, contains('normalizeContourWinding'));
     expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.9+10'));
+    expect(pubspec, contains('version: 1.0.10+11'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

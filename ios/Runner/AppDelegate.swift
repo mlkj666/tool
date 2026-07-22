@@ -1323,6 +1323,15 @@ private enum RasterGlyphConverter {
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
+    if let grayscale = try grayscaleLayers(
+      samples: samples,
+      foregroundCount: foregroundCount,
+      width: dimension,
+      height: dimension,
+      unitsPerEm: unitsPerEm
+    ) {
+      return grayscale
+    }
 
     let ranked = histogram.values.sorted { $0.count > $1.count }
     var centers: [ColorSample] = []
@@ -1391,6 +1400,91 @@ private enum RasterGlyphConverter {
       ))
     }
     return output
+  }
+
+  private static func grayscaleLayers(
+    samples: [ColorSample?],
+    foregroundCount: Int,
+    width: Int,
+    height: Int,
+    unitsPerEm: Int
+  ) throws -> [RasterColorLayer]? {
+    let colors = samples.compactMap { $0 }
+    let neutralCount = colors.reduce(0) { count, sample in
+      let high = max(sample.red, max(sample.green, sample.blue))
+      let low = min(sample.red, min(sample.green, sample.blue))
+      return count + (high - low <= 18 ? 1 : 0)
+    }
+    guard neutralCount * 100 >= foregroundCount * 95 else { return nil }
+
+    var histogram = [Int](repeating: 0, count: 256)
+    var totalLuminance = 0.0
+    for sample in colors {
+      let value = max(0, min(255, Int(round(luminance(sample)))))
+      histogram[value] += 1
+      totalLuminance += Double(value)
+    }
+    guard let minimum = histogram.firstIndex(where: { $0 > 0 }),
+          let maximum = histogram.lastIndex(where: { $0 > 0 }),
+          maximum - minimum >= 48 else { return nil }
+
+    var darkCount = 0
+    var darkSum = 0.0
+    var bestThreshold = (minimum + maximum) / 2
+    var bestVariance = -1.0
+    for threshold in minimum..<maximum {
+      darkCount += histogram[threshold]
+      darkSum += Double(threshold * histogram[threshold])
+      let lightCount = foregroundCount - darkCount
+      guard darkCount > 0, lightCount > 0 else { continue }
+      let darkMean = darkSum / Double(darkCount)
+      let lightMean = (totalLuminance - darkSum) / Double(lightCount)
+      let variance = Double(darkCount * lightCount) * pow(darkMean - lightMean, 2)
+      if variance > bestVariance {
+        bestVariance = variance
+        bestThreshold = threshold
+      }
+    }
+
+    var labels = [Int](repeating: -1, count: samples.count)
+    var sums = Array(repeating: (red: 0.0, green: 0.0, blue: 0.0, count: 0), count: 2)
+    for index in samples.indices {
+      guard let sample = samples[index] else { continue }
+      let label = luminance(sample) <= Double(bestThreshold) ? 0 : 1
+      labels[index] = label
+      sums[label].red += sample.red
+      sums[label].green += sample.green
+      sums[label].blue += sample.blue
+      sums[label].count += 1
+    }
+
+    var output: [RasterColorLayer] = []
+    let minimumPixels = max(8, Int(Double(foregroundCount) * 0.0015))
+    for label in [1, 0] where sums[label].count >= minimumPixels {
+      guard let mask = makeMask(
+        labels: labels,
+        selected: label,
+        width: width,
+        height: height
+      ) else { continue }
+      let layerContours = try contours(from: mask, unitsPerEm: unitsPerEm)
+      guard !layerContours.isEmpty else { continue }
+      let count = Double(sums[label].count)
+      output.append(RasterColorLayer(
+        color: (
+          UInt8(max(0, min(255, (sums[label].red / count).rounded()))),
+          UInt8(max(0, min(255, (sums[label].green / count).rounded()))),
+          UInt8(max(0, min(255, (sums[label].blue / count).rounded()))),
+          255
+        ),
+        contours: layerContours
+      ))
+    }
+    return output.isEmpty ? nil : output
+  }
+
+  private static func luminance(_ sample: ColorSample) -> Double {
+    sample.red * 0.299 + sample.green * 0.587 + sample.blue * 0.114
   }
 
   private static func rasterSamples(
@@ -1581,9 +1675,8 @@ private enum RasterGlyphConverter {
     let inset = Double(unitsPerEm) * 0.08
     let body = Double(unitsPerEm) - inset * 2
     var output: [[OutlinePoint]] = []
-    func append(_ contour: VNContour, depth: Int) {
+    func append(_ contour: VNContour) {
       var points = Array(contour.normalizedPoints)
-      if depth.isMultiple(of: 2) == false { points.reverse() }
       if points.count >= 3 {
         let step = max(1, Int(ceil(Double(points.count) / 2048.0)))
         if step > 1 { points = points.enumerated().compactMap { $0.offset % step == 0 ? $0.element : nil } }
@@ -1595,10 +1688,60 @@ private enum RasterGlyphConverter {
         )
         })
       }
-      for child in contour.childContours { append(child, depth: depth + 1) }
+      for child in contour.childContours { append(child) }
     }
-    for contour in observation.topLevelContours { append(contour, depth: 0) }
-    return output
+    for contour in observation.topLevelContours { append(contour) }
+    return normalizeContourWinding(output)
+  }
+
+  private static func normalizeContourWinding(
+    _ contours: [[OutlinePoint]]
+  ) -> [[OutlinePoint]] {
+    let areas = contours.map(signedArea)
+    return contours.indices.map { index in
+      let contour = contours[index]
+      guard contour.count >= 3, let sample = contour.first else { return contour }
+      let depth = contours.indices.reduce(0) { value, otherIndex in
+        guard otherIndex != index,
+              abs(areas[otherIndex]) > abs(areas[index]),
+              contains(sample, in: contours[otherIndex]) else { return value }
+        return value + 1
+      }
+      let shouldBeClockwise = depth.isMultiple(of: 2)
+      let isClockwise = areas[index] < 0
+      return shouldBeClockwise == isClockwise ? contour : Array(contour.reversed())
+    }
+  }
+
+  private static func signedArea(_ contour: [OutlinePoint]) -> Double {
+    guard contour.count >= 3 else { return 0 }
+    return contour.indices.reduce(0.0) { area, index in
+      let point = contour[index]
+      let next = contour[(index + 1) % contour.count]
+      return area + Double(point.x * next.y - next.x * point.y) * 0.5
+    }
+  }
+
+  private static func contains(
+    _ point: OutlinePoint,
+    in contour: [OutlinePoint]
+  ) -> Bool {
+    guard contour.count >= 3 else { return false }
+    let x = Double(point.x) + 0.125
+    let y = Double(point.y) + 0.125
+    var inside = false
+    var previous = contour.last!
+    for current in contour {
+      let currentY = Double(current.y)
+      let previousY = Double(previous.y)
+      if (currentY > y) != (previousY > y) {
+        let crossing = Double(previous.x - current.x) * (y - currentY) /
+          (previousY - currentY) + Double(current.x)
+        if x < crossing { inside.toggle() }
+      }
+      previous = current
+    }
+    return inside
   }
 }
 

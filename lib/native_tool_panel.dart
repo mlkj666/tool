@@ -220,12 +220,120 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           : null;
       final encoded = first?['base64']?.toString() ?? '';
       if (encoded.isEmpty || !mounted) return;
-      setState(() => _imageBytes = base64Decode(encoded));
+      final prepared = await _prepareImportedImage(base64Decode(encoded));
+      if (!mounted) return;
+      setState(() => _imageBytes = prepared);
     } catch (error) {
       _message('图片导入失败：$error');
     } finally {
       if (mounted) setState(() => _pickingImage = false);
     }
+  }
+
+  Future<Uint8List> _prepareImportedImage(Uint8List bytes) async {
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    final image = frame.image;
+    final pixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    if (pixels == null) return bytes;
+
+    final detected = _foregroundBounds(pixels, image.width, image.height);
+    final source =
+        detected ??
+        Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
+    final padding = max(2.0, min(image.width, image.height) * .015);
+    final expanded = Rect.fromLTRB(
+      max(0.0, source.left - padding),
+      max(0.0, source.top - padding),
+      min(image.width.toDouble(), source.right + padding),
+      min(image.height.toDouble(), source.bottom + padding),
+    );
+
+    const side = 512.0;
+    const available = 480.0;
+    final scale = min(available / expanded.width, available / expanded.height);
+    final destination = Rect.fromCenter(
+      center: const Offset(side / 2, side / 2),
+      width: expanded.width * scale,
+      height: expanded.height * scale,
+    );
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      image,
+      expanded,
+      destination,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    final rendered = await recorder.endRecording().toImage(512, 512);
+    final output = await rendered.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    rendered.dispose();
+    return output?.buffer.asUint8List() ?? bytes;
+  }
+
+  Rect? _foregroundBounds(ByteData pixels, int width, int height) {
+    int offset(int x, int y) => (y * width + x) * 4;
+    final corners = [
+      offset(0, 0),
+      offset(width - 1, 0),
+      offset(0, height - 1),
+      offset(width - 1, height - 1),
+    ];
+    final opaqueCorners = corners.every(
+      (index) => pixels.getUint8(index + 3) >= 240,
+    );
+    final background = List<int>.generate(
+      3,
+      (channel) =>
+          corners.fold<int>(
+            0,
+            (sum, index) => sum + pixels.getUint8(index + channel),
+          ) ~/
+          corners.length,
+    );
+    final consistentBackground =
+        opaqueCorners &&
+        corners.every(
+          (index) => List<int>.generate(3, (channel) => channel).every(
+            (channel) =>
+                (pixels.getUint8(index + channel) - background[channel])
+                    .abs() <=
+                24,
+          ),
+        );
+
+    var minX = width;
+    var minY = height;
+    var maxX = -1;
+    var maxY = -1;
+    for (var y = 0; y < height; y++) {
+      for (var x = 0; x < width; x++) {
+        final index = offset(x, y);
+        final alpha = pixels.getUint8(index + 3);
+        if (alpha < 24) continue;
+        if (consistentBackground) {
+          final red = pixels.getUint8(index) - background[0];
+          final green = pixels.getUint8(index + 1) - background[1];
+          final blue = pixels.getUint8(index + 2) - background[2];
+          final distance = sqrt(
+            red * red * .30 + green * green * .59 + blue * blue * .11,
+          );
+          if (distance < 30) continue;
+        }
+        minX = min(minX, x);
+        minY = min(minY, y);
+        maxX = max(maxX, x);
+        maxY = max(maxY, y);
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    return Rect.fromLTRB(
+      minX.toDouble(),
+      minY.toDouble(),
+      (maxX + 1).toDouble(),
+      (maxY + 1).toDouble(),
+    );
   }
 
   Future<void> _applyAdjustments() async {
