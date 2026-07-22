@@ -69,25 +69,19 @@ void main() {
     expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
     expect(nativeEngine, contains('makeCOLR'));
     expect(nativeEngine, contains('makeCPAL'));
-    expect(nativeEngine, contains('tables["sbix"] = FontTable'));
-    expect(nativeEngine, contains('imagesByGlyph'));
     expect(nativeEngine, contains('isGrayscaleImage'));
     expect(nativeEngine, contains('normalizeContourWinding'));
     expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
-    expect(nativeEngine, contains('makeSBIX(imagesByGlyph: imagesByGlyph'));
-    expect(nativeEngine, contains('appendUInt16(&table, 1)'));
-    expect(
-      nativeEngine,
-      contains('let ppems = [16, 24, 32, 48, 64, 96, 128, 256, 512]'),
-    );
+    expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
+    expect(nativeEngine, isNot(contains('makeSBIX')));
     expect(nativeEngine, contains('!imageGlyphs.contains(glyph)'));
     expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.13+14'));
+    expect(pubspec, contains('version: 1.0.14+15'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

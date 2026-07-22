@@ -1114,12 +1114,13 @@ private enum NativeColorFontProcessor {
   static func apply(data: Data, params: NativeFontAdjustParams) throws -> Data {
     let hasGlobal = params.globalColor != nil
     let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
-    let hasBitmaps = !params.replacements.isEmpty
-    guard hasPalette || hasBitmaps else { return data }
+    let hasReplacements = !params.replacements.isEmpty
+    guard hasPalette || hasReplacements else { return data }
     guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
     var tables = try NativeTTFProcessor.readTables(data)
     tables.removeValue(forKey: "COLR")
     tables.removeValue(forKey: "CPAL")
+    tables.removeValue(forKey: "sbix")
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
@@ -1158,15 +1159,6 @@ private enum NativeColorFontProcessor {
       }
       for (glyph, value) in glyphColors {
         layersByGlyph[glyph] = [(glyph, paletteIndex(for: parseColor(value)))]
-      }
-    }
-    if hasBitmaps {
-      var imagesByGlyph: [Int: Data] = [:]
-      for (characters, imageData) in params.replacements {
-        for glyph in glyphIDs(for: characters, font: ctFont) { imagesByGlyph[glyph] = imageData }
-      }
-      if !imagesByGlyph.isEmpty {
-        tables["sbix"] = FontTable(tag: "sbix", checksum: 0, data: makeSBIX(imagesByGlyph: imagesByGlyph, glyphCount: glyphCount))
       }
     }
     if !layersByGlyph.isEmpty && !palette.isEmpty {
@@ -1295,73 +1287,6 @@ private enum NativeColorFontProcessor {
       table.append(blue); table.append(green); table.append(red); table.append(alpha)
     }
     return table
-  }
-
-  private static func makeSBIX(
-    imagesByGlyph: [Int: Data],
-    glyphCount: Int
-  ) -> Data {
-    let ppems = [16, 24, 32, 48, 64, 96, 128, 256, 512]
-    var resized: [Int: [Int: Data]] = [:]
-    for ppem in ppems {
-      var images: [Int: Data] = [:]
-      for (glyph, imageData) in imagesByGlyph {
-        if let data = resizeBitmap(imageData, side: ppem) {
-          images[glyph] = data
-        }
-      }
-      resized[ppem] = images
-    }
-
-    var table = Data()
-    appendUInt16(&table, 1)
-    appendUInt16(&table, 1)
-    appendUInt32(&table, UInt32(ppems.count))
-    let headerSize = 8 + ppems.count * 4
-    var strikeOffset = headerSize
-    var strikes = Data()
-    for ppem in ppems {
-      var strike = Data()
-      appendUInt16(&strike, UInt16(ppem))
-      appendUInt16(&strike, 72)
-      var offsets = Data()
-      var bitmapData = Data()
-      var current = 4 + (glyphCount + 1) * 4
-      for glyph in 0..<glyphCount {
-        appendUInt32(&offsets, UInt32(current))
-        if let image = resized[ppem]?[glyph] {
-          var record = Data()
-          appendInt16(&record, 0)
-          appendInt16(&record, 0)
-          record.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
-          record.append(image)
-          bitmapData.append(record)
-          current += record.count
-        }
-      }
-      appendUInt32(&offsets, UInt32(current))
-      strike.append(offsets)
-      strike.append(bitmapData)
-      appendUInt32(&table, UInt32(strikeOffset))
-      strikes.append(strike)
-      strikeOffset += strike.count
-    }
-    table.append(strikes)
-    return table
-  }
-
-  private static func resizeBitmap(_ data: Data, side: Int) -> Data? {
-    guard let image = UIImage(data: data) else { return nil }
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    format.opaque = false
-    let rendered = UIGraphicsImageRenderer(
-      size: CGSize(width: side, height: side),
-      format: format
-    ).image { _ in
-      image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
-    }
-    return rendered.pngData()
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
