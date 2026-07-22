@@ -30,6 +30,10 @@ void main() {
     expect(panel, contains("'replacements': _replacements.map"));
     expect(panel, contains('RenderRepaintBoundary'));
     expect(panel, contains('_liveReplacementImage'));
+    expect(panel, contains('bool _pickingImage = false'));
+    expect(nativeEngine, contains('imageRequestToken'));
+    expect(nativeEngine, contains('finishImageRequest'));
+    expect(nativeEngine, contains('cancelImageRequest'));
     expect(panel, contains('_bindImportedImage(notify: false)'));
     expect(panel, contains('Icons.remove_circle_outline'));
     expect(panel, contains('Icons.add_circle_outline'));
@@ -48,6 +52,6 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.5+6'));
+    expect(pubspec, contains('version: 1.0.6+7'));
   });
 }

@@ -8,6 +8,8 @@ import Vision
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
   private var pendingImageResult: FlutterResult?
+  private var imageRequestToken: UUID?
+  private weak var activeImagePicker: UIViewController?
   private var pendingFontResult: FlutterResult?
   private var pendingSaveResult: FlutterResult?
   private var exportUrl: URL?
@@ -64,35 +66,55 @@ import Vision
   }
 
   private func pickImages(source: String, result: @escaping FlutterResult) {
-    guard pendingImageResult == nil else {
-      result(FlutterError(code: "busy", message: "正在处理上一次图片选择", details: nil))
+    if pendingImageResult != nil {
+      if activeImagePicker?.presentingViewController != nil {
+        result([])
+        return
+      }
+      cancelImageRequest()
+    }
+    guard let presenter = topViewController() else {
+      result(FlutterError(code: "unavailable", message: "暂时无法打开图片选择器，请稍后重试", details: nil))
       return
     }
+    let token = UUID()
     pendingImageResult = result
+    imageRequestToken = token
 
     if source == "camera", UIImagePickerController.isSourceTypeAvailable(.camera) {
       let picker = UIImagePickerController()
       picker.sourceType = .camera
       picker.mediaTypes = ["public.image"]
       picker.delegate = self
-      topViewController()?.present(picker, animated: true)
+      activeImagePicker = picker
+      presenter.present(picker, animated: true) { [weak self, weak picker] in
+        guard picker?.presentingViewController == nil else { return }
+        self?.finishImageRequest(token: token, value: FlutterError(code: "unavailable", message: "相机打开失败，请稍后重试", details: nil))
+      }
       return
     }
 
     var config = PHPickerConfiguration(photoLibrary: .shared())
     config.filter = .images
-    config.selectionLimit = 0
+    config.selectionLimit = 1
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
-    topViewController()?.present(picker, animated: true)
+    activeImagePicker = picker
+    presenter.present(picker, animated: true) { [weak self, weak picker] in
+      guard picker?.presentingViewController == nil else { return }
+      self?.finishImageRequest(token: token, value: FlutterError(code: "unavailable", message: "相册打开失败，请稍后重试", details: nil))
+    }
   }
 
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    guard picker === activeImagePicker, let token = imageRequestToken else {
+      picker.dismiss(animated: true)
+      return
+    }
+    activeImagePicker = nil
     picker.dismiss(animated: true)
-    guard let pending = pendingImageResult else { return }
     if results.isEmpty {
-      pendingImageResult = nil
-      pending([])
+      finishImageRequest(token: token, value: [])
       return
     }
 
@@ -116,21 +138,23 @@ import Vision
     }
 
     group.notify(queue: .main) {
-      self.pendingImageResult = nil
-      pending(output)
+      self.finishImageRequest(token: token, value: output)
     }
   }
 
   func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-    picker.dismiss(animated: true)
-    guard let pending = pendingImageResult else { return }
-    pendingImageResult = nil
-    guard let image = info[.originalImage] as? UIImage,
-          let data = image.pngData() else {
-      pending([])
+    guard picker === activeImagePicker, let token = imageRequestToken else {
+      picker.dismiss(animated: true)
       return
     }
-    pending([[
+    activeImagePicker = nil
+    picker.dismiss(animated: true)
+    guard let image = info[.originalImage] as? UIImage,
+          let data = image.pngData() else {
+      finishImageRequest(token: token, value: [])
+      return
+    }
+    finishImageRequest(token: token, value: [[
       "name": "拍照导入.png",
       "mime": "image/png",
       "base64": data.base64EncodedString()
@@ -138,9 +162,26 @@ import Vision
   }
 
   func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    let token = imageRequestToken
+    activeImagePicker = nil
     picker.dismiss(animated: true)
-    pendingImageResult?([])
+    if let token { finishImageRequest(token: token, value: []) }
+  }
+
+  private func finishImageRequest(token: UUID, value: Any?) {
+    guard imageRequestToken == token, let pending = pendingImageResult else { return }
     pendingImageResult = nil
+    imageRequestToken = nil
+    activeImagePicker = nil
+    pending(value)
+  }
+
+  private func cancelImageRequest() {
+    let pending = pendingImageResult
+    pendingImageResult = nil
+    imageRequestToken = nil
+    activeImagePicker = nil
+    pending?([])
   }
 
   private func saveFont(arguments: Any?, result: @escaping FlutterResult) {

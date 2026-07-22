@@ -46,6 +46,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   double _rise = 0;
   double _line = 0;
   bool _busy = false;
+  bool _pickingImage = false;
   int _tab = 0;
   bool _targetAll = true;
   final _targetCharsController = TextEditingController();
@@ -207,6 +208,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   }
 
   Future<void> _pickImage() async {
+    if (_pickingImage) return;
+    if (mounted) setState(() => _pickingImage = true);
     try {
       final result = await _channel.invokeMethod<List<Object?>>('pickImages', {
         'source': 'photo',
@@ -219,6 +222,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       setState(() => _imageBytes = base64Decode(encoded));
     } catch (error) {
       _message('图片导入失败：$error');
+    } finally {
+      if (mounted) setState(() => _pickingImage = false);
     }
   }
 
@@ -775,7 +780,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             icon: const Icon(Icons.font_download_outlined),
           ),
           IconButton(
-            onPressed: _pickImage,
+            onPressed: _pickingImage ? null : _pickImage,
             tooltip: '导入图片',
             icon: const Icon(Icons.image_outlined),
           ),
@@ -1287,9 +1292,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         ),
       ),
       FilledButton.icon(
-        onPressed: _pickImage,
+        onPressed: _pickingImage ? null : _pickImage,
         icon: const Icon(Icons.photo_library_outlined),
-        label: const Text('从相册导入图片'),
+        label: Text(_pickingImage ? '正在打开相册...' : '从相册导入图片'),
       ),
       if (_imageBytes != null)
         Padding(
