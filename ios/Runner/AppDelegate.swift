@@ -238,6 +238,36 @@ import Vision
     }
   }
 
+  private func renameFont(arguments: Any?, result: @escaping FlutterResult) {
+    guard let args = arguments as? [String: Any],
+          let encoded = args["base64"] as? String,
+          let data = Data(base64Encoded: encoded),
+          let family = args["family"] as? String,
+          !family.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      result(FlutterError(code: "bad_args", message: "字体名称不能为空", details: nil))
+      return
+    }
+    let subfamily = args["subfamily"] as? String ?? "Regular"
+    let fullName = args["fullName"] as? String ?? "\(family) \(subfamily)"
+    let postScript = args["postScript"] as? String ?? "\(family)-\(subfamily)"
+    fontProcessingQueue.async {
+      do {
+        let output = try NativeNameFontProcessor.apply(
+          data: data,
+          family: family,
+          subfamily: subfamily,
+          fullName: fullName,
+          postScript: postScript
+        )
+        DispatchQueue.main.async { result(["base64": output.base64EncodedString()]) }
+      } catch {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "rename_failed", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
     pendingFontResult?(nil)
     pendingFontResult = nil
@@ -821,27 +851,6 @@ private final class NativeTTFProcessor {
       writeUInt16(&out, 76, UInt16(max(0, min(65535, Int(readUInt16(out, 76)) + delta))))
     }
     return out
-  }
-
-  private func renameFont(arguments: Any?, result: @escaping FlutterResult) {
-    guard let args = arguments as? [String: Any],
-          let encoded = args["base64"] as? String,
-          let data = Data(base64Encoded: encoded),
-          let family = args["family"] as? String,
-          !family.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      result(FlutterError(code: "bad_args", message: "字体名称不能为空", details: nil)); return
-    }
-    let subfamily = args["subfamily"] as? String ?? "Regular"
-    let fullName = args["fullName"] as? String ?? "\(family) \(subfamily)"
-    let postScript = args["postScript"] as? String ?? "\(family)-\(subfamily)"
-    fontProcessingQueue.async {
-      do {
-        let output = try NativeNameFontProcessor.apply(data: data, family: family, subfamily: subfamily, fullName: fullName, postScript: postScript)
-        DispatchQueue.main.async { result(["base64": output.base64EncodedString()]) }
-      } catch {
-        DispatchQueue.main.async { result(FlutterError(code: "rename_failed", message: error.localizedDescription, details: nil)) }
-      }
-    }
   }
 
   private static func patchWeightClass(_ os2: Data, weightPercent: Double) -> Data {

@@ -37,6 +37,6 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.2+3'));
+    expect(pubspec, contains('version: 1.0.3+4'));
   });
 }
