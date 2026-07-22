@@ -76,7 +76,7 @@ void main() {
     expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
     expect(nativeEngine, contains('makeSBIX(imagesByGlyph: imagesByGlyph'));
-    expect(nativeEngine, contains('appendUInt16(&table, 3)'));
+    expect(nativeEngine, contains('appendUInt16(&table, 1)'));
     expect(
       nativeEngine,
       contains('let ppems = [16, 24, 32, 48, 64, 96, 128, 256, 512]'),
@@ -87,7 +87,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.12+13'));
+    expect(pubspec, contains('version: 1.0.13+14'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

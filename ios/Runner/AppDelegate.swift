@@ -1315,7 +1315,7 @@ private enum NativeColorFontProcessor {
 
     var table = Data()
     appendUInt16(&table, 1)
-    appendUInt16(&table, 3)
+    appendUInt16(&table, 1)
     appendUInt32(&table, UInt32(ppems.count))
     let headerSize = 8 + ppems.count * 4
     var strikeOffset = headerSize
