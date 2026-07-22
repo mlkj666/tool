@@ -1057,6 +1057,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           maxLines: 1,
         )..layout();
         final naturalWidth = replacement != null ? size : painter.width;
+        final naturalHeight = replacement != null ? size : painter.height;
         final characterSpacing = liveImage
             ? _imageSpacing
             : (adjustment['spacing'] ?? 0);
@@ -1071,11 +1072,18 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           ),
           child: SizedBox(
             width: layoutWidth,
-            child: OverflowBox(
-              alignment: Alignment.centerLeft,
-              minWidth: naturalWidth,
-              maxWidth: naturalWidth,
-              child: child,
+            height: naturalHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  width: naturalWidth,
+                  height: naturalHeight,
+                  child: child,
+                ),
+              ],
             ),
           ),
         );

@@ -1,6 +1,16 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tool_iphone_app/native_tool_panel.dart';
+
+class _TestUser {
+  const _TestUser();
+
+  String get username => 'tester';
+  String get role => 'admin';
+  String get expireTime => '';
+}
 
 void main() {
   late String panel;
@@ -34,7 +44,8 @@ void main() {
     expect(panel, contains('_tryParseCustomColor'));
     expect(panel, contains("labelText: '自定义色值'"));
     expect(panel, contains('bool _globalColorEnabled = false'));
-    expect(panel, contains('minWidth: naturalWidth'));
+    expect(panel, contains('height: naturalHeight'));
+    expect(panel, contains('clipBehavior: Clip.none'));
     expect(
       panel,
       contains('naturalWidth + _spacing * .25 + characterSpacing * .2'),
@@ -63,6 +74,30 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.8+9'));
+    expect(pubspec, contains('version: 1.0.9+10'));
+  });
+
+  testWidgets('current effect preview lays out without an exception', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeToolPanel(
+          user: const _TestUser(),
+          cookie: null,
+          onLogout: () async {},
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('当前效果'), findsOneWidget);
+    expect(find.text('爆'), findsOneWidget);
+    final glyphSize = tester.getSize(find.text('爆'));
+    expect(glyphSize.width, greaterThan(0));
+    expect(glyphSize.height, greaterThan(0));
+    expect(glyphSize.width.isFinite, isTrue);
+    expect(glyphSize.height.isFinite, isTrue);
+    expect(tester.takeException(), isNull);
   });
 }
