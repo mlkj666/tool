@@ -56,6 +56,10 @@ void main() {
       ),
     );
     expect(nativeProcessor, contains('let needsTransform ='));
+    expect(
+      nativeProcessor,
+      contains('red: min(255, Double(pixels[offset + 2]) * factor)'),
+    );
   });
 
   test('export and native metadata use the required behavior contract', () {

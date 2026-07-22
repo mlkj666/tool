@@ -1123,6 +1123,10 @@ private enum NativeColorFontProcessor {
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
+    var imageGlyphs = Set<Int>()
+    for (characters, _) in params.replacements {
+      imageGlyphs.formUnion(glyphIDs(for: characters, font: ctFont))
+    }
     var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
     var paletteIndexes: [UInt32: Int] = [:]
     var layersByGlyph: [Int: [(glyph: Int, palette: Int)]] = [:]
@@ -1138,13 +1142,19 @@ private enum NativeColorFontProcessor {
     if hasPalette {
       var glyphColors: [Int: String] = [:]
       if let global = params.globalColor, hasGlobal {
-        for glyph in 1..<glyphCount { glyphColors[glyph] = global }
+        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
+          glyphColors[glyph] = global
+        }
       }
       if !params.randomColors.isEmpty {
-        for glyph in 1..<glyphCount { glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count] }
+        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
+          glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count]
+        }
       }
       for (characters, color) in params.characterColors {
-        for glyph in glyphIDs(for: characters, font: ctFont) { glyphColors[glyph] = color }
+        for glyph in glyphIDs(for: characters, font: ctFont) where !imageGlyphs.contains(glyph) {
+          glyphColors[glyph] = color
+        }
       }
       for (glyph, value) in glyphColors {
         layersByGlyph[glyph] = [(glyph, paletteIndex(for: parseColor(value)))]
@@ -1156,19 +1166,8 @@ private enum NativeColorFontProcessor {
         for glyph in glyphIDs(for: characters, font: ctFont) { imagesByGlyph[glyph] = imageData }
       }
       if !imagesByGlyph.isEmpty {
-        let imageLayers = try appendImageLayers(
-          to: &tables,
-          imagesByGlyph: imagesByGlyph,
-          params: params,
-          font: ctFont
-        )
-        for (baseGlyph, layers) in imageLayers {
-          layersByGlyph[baseGlyph] = layers.map { layer in
-            (layer.glyph, paletteIndex(for: layer.color))
-          }
-        }
+        tables["sbix"] = FontTable(tag: "sbix", checksum: 0, data: makeSBIX(imagesByGlyph: imagesByGlyph, glyphCount: glyphCount))
       }
-      tables.removeValue(forKey: "sbix")
     }
     if !layersByGlyph.isEmpty && !palette.isEmpty {
       tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: makeCOLR(layersByGlyph))
@@ -1296,6 +1295,73 @@ private enum NativeColorFontProcessor {
       table.append(blue); table.append(green); table.append(red); table.append(alpha)
     }
     return table
+  }
+
+  private static func makeSBIX(
+    imagesByGlyph: [Int: Data],
+    glyphCount: Int
+  ) -> Data {
+    let ppems = [16, 24, 32, 48, 64, 96, 128, 256, 512]
+    var resized: [Int: [Int: Data]] = [:]
+    for ppem in ppems {
+      var images: [Int: Data] = [:]
+      for (glyph, imageData) in imagesByGlyph {
+        if let data = resizeBitmap(imageData, side: ppem) {
+          images[glyph] = data
+        }
+      }
+      resized[ppem] = images
+    }
+
+    var table = Data()
+    appendUInt16(&table, 1)
+    appendUInt16(&table, 3)
+    appendUInt32(&table, UInt32(ppems.count))
+    let headerSize = 8 + ppems.count * 4
+    var strikeOffset = headerSize
+    var strikes = Data()
+    for ppem in ppems {
+      var strike = Data()
+      appendUInt16(&strike, UInt16(ppem))
+      appendUInt16(&strike, 72)
+      var offsets = Data()
+      var bitmapData = Data()
+      var current = 4 + (glyphCount + 1) * 4
+      for glyph in 0..<glyphCount {
+        appendUInt32(&offsets, UInt32(current))
+        if let image = resized[ppem]?[glyph] {
+          var record = Data()
+          appendInt16(&record, 0)
+          appendInt16(&record, 0)
+          record.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
+          record.append(image)
+          bitmapData.append(record)
+          current += record.count
+        }
+      }
+      appendUInt32(&offsets, UInt32(current))
+      strike.append(offsets)
+      strike.append(bitmapData)
+      appendUInt32(&table, UInt32(strikeOffset))
+      strikes.append(strike)
+      strikeOffset += strike.count
+    }
+    table.append(strikes)
+    return table
+  }
+
+  private static func resizeBitmap(_ data: Data, side: Int) -> Data? {
+    guard let image = UIImage(data: data) else { return nil }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let rendered = UIGraphicsImageRenderer(
+      size: CGSize(width: side, height: side),
+      format: format
+    ).image { _ in
+      image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+    }
+    return rendered.pngData()
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -1522,9 +1588,9 @@ private enum RasterGlyphConverter {
       guard alpha >= 24 else { continue }
       let factor = 255.0 / Double(alpha)
       samples[index] = ColorSample(
-        red: min(255, Double(pixels[offset]) * factor),
+        red: min(255, Double(pixels[offset + 2]) * factor),
         green: min(255, Double(pixels[offset + 1]) * factor),
-        blue: min(255, Double(pixels[offset + 2]) * factor)
+        blue: min(255, Double(pixels[offset]) * factor)
       )
     }
     return (samples, dominantEdgeBackground(samples, width: dimension, height: dimension))
