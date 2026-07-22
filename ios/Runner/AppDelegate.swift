@@ -1004,6 +1004,18 @@ private enum NativeColorFontProcessor {
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
+    var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
+    var paletteIndexes: [UInt32: Int] = [:]
+    var layersByGlyph: [Int: [(glyph: Int, palette: Int)]] = [:]
+    func paletteIndex(for color: (UInt8, UInt8, UInt8, UInt8)) -> Int {
+      let key = UInt32(color.0) << 24 | UInt32(color.1) << 16 | UInt32(color.2) << 8 | UInt32(color.3)
+      if let existing = paletteIndexes[key] { return existing }
+      let index = palette.count
+      palette.append(color)
+      paletteIndexes[key] = index
+      return index
+    }
+
     if hasPalette {
       var glyphColors: [Int: String] = [:]
       if let global = params.globalColor, hasGlobal {
@@ -1015,32 +1027,8 @@ private enum NativeColorFontProcessor {
       for (characters, color) in params.characterColors {
         for glyph in glyphIDs(for: characters, font: ctFont) { glyphColors[glyph] = color }
       }
-      if !glyphColors.isEmpty {
-        var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
-        var paletteIndex: [String: Int] = [:]
-        for color in Set(glyphColors.values).sorted() {
-          paletteIndex[color] = palette.count
-          palette.append(parseColor(color))
-        }
-        let sorted = glyphColors.keys.sorted()
-        var colr = Data()
-        appendUInt16(&colr, 0)
-        appendUInt16(&colr, UInt16(sorted.count))
-        appendUInt32(&colr, 14)
-        appendUInt32(&colr, UInt32(14 + sorted.count * 6))
-        appendUInt16(&colr, UInt16(sorted.count))
-        for (index, glyph) in sorted.enumerated() {
-          appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(index)); appendUInt16(&colr, 1)
-        }
-        for glyph in sorted {
-          appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(paletteIndex[glyphColors[glyph]!] ?? 0))
-        }
-        var cpal = Data()
-        appendUInt16(&cpal, 0); appendUInt16(&cpal, UInt16(palette.count)); appendUInt16(&cpal, 1)
-        appendUInt16(&cpal, UInt16(palette.count)); appendUInt32(&cpal, 14); appendUInt16(&cpal, 0)
-        for (red, green, blue, alpha) in palette { cpal.append(blue); cpal.append(green); cpal.append(red); cpal.append(alpha) }
-        tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: colr)
-        tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: cpal)
+      for (glyph, value) in glyphColors {
+        layersByGlyph[glyph] = [(glyph, paletteIndex(for: parseColor(value)))]
       }
     }
     if hasBitmaps {
@@ -1049,43 +1037,145 @@ private enum NativeColorFontProcessor {
         for glyph in glyphIDs(for: characters, font: ctFont) { imagesByGlyph[glyph] = imageData }
       }
       if !imagesByGlyph.isEmpty {
-        tables["sbix"] = FontTable(
-          tag: "sbix",
-          checksum: 0,
-          data: makeSbixTable(glyphCount: glyphCount, imagesByGlyph: imagesByGlyph)
+        let imageLayers = try appendImageLayers(
+          to: &tables,
+          imagesByGlyph: imagesByGlyph,
+          params: params,
+          font: ctFont
         )
+        for (baseGlyph, layers) in imageLayers {
+          layersByGlyph[baseGlyph] = layers.map { layer in
+            (layer.glyph, paletteIndex(for: layer.color))
+          }
+        }
       }
+      tables.removeValue(forKey: "sbix")
+    }
+    if !layersByGlyph.isEmpty && !palette.isEmpty {
+      tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: makeCOLR(layersByGlyph))
+      tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: makeCPAL(palette))
     }
     return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
   }
 
-  private static func makeSbixTable(glyphCount: Int, imagesByGlyph: [Int: Data]) -> Data {
-    let safeCount = max(1, glyphCount)
-    let glyphDataStart = 4 + (safeCount + 1) * 4
-    var strike = Data()
-    appendUInt16(&strike, 512)
-    appendUInt16(&strike, 72)
-    var glyphData = Data()
-    var offsets: [UInt32] = []
-    offsets.reserveCapacity(safeCount + 1)
-    for glyph in 0..<safeCount {
-      offsets.append(UInt32(glyphDataStart + glyphData.count))
-      guard let image = imagesByGlyph[glyph], !image.isEmpty else { continue }
-      appendInt16(&glyphData, 0)
-      appendInt16(&glyphData, 0)
-      glyphData.append(contentsOf: [0x70, 0x6E, 0x67, 0x20])
-      glyphData.append(image)
+  private static func appendImageLayers(
+    to tables: inout [String: FontTable],
+    imagesByGlyph: [Int: Data],
+    params: NativeFontAdjustParams,
+    font: CTFont
+  ) throws -> [Int: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))]] {
+    guard var head = tables["head"]?.data,
+          var hhea = tables["hhea"]?.data,
+          var maxp = tables["maxp"]?.data,
+          var hmtx = tables["hmtx"]?.data,
+          var loca = tables["loca"]?.data,
+          var glyf = tables["glyf"]?.data else { throw NativeFontError.malformedFont }
+    let originalCount = Int(readUInt16(maxp, 4))
+    let upm = max(1, Int(readUInt16(head, 18)))
+    let globalYMid = Double(Int(Int16(bitPattern: readUInt16(hhea, 4))) + Int(Int16(bitPattern: readUInt16(hhea, 6)))) * 0.5
+    let selectedGlyphs = params.targetAll ? nil : glyphIDs(for: params.chars, font: font)
+    var glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]
+    for (characters, adjustment) in params.characterAdjustments {
+      for glyph in glyphIDs(for: characters, font: font) { glyphAdjustments[glyph] = adjustment }
     }
-    offsets.append(UInt32(glyphDataStart + glyphData.count))
-    for offset in offsets { appendUInt32(&strike, offset) }
-    strike.append(glyphData)
+    let longLoca = Int16(bitPattern: readUInt16(head, 50)) == 1
+    var offsets = [Int](repeating: 0, count: originalCount + 1)
+    for index in 0...originalCount {
+      let offset = index * (longLoca ? 4 : 2)
+      offsets[index] = longLoca ? Int(readUInt32(loca, offset)) : Int(readUInt16(loca, offset)) * 2
+    }
+    var output: [Int: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))]] = [:]
+    var glyphCount = originalCount
+    for (baseGlyph, imageData) in imagesByGlyph.sorted(by: { $0.key < $1.key }) {
+      let rasterLayers = try RasterGlyphConverter.colorLayers(from: imageData, unitsPerEm: upm)
+      guard !rasterLayers.isEmpty else { continue }
+      let selected = selectedGlyphs == nil || selectedGlyphs!.contains(baseGlyph)
+      let adjustment = glyphAdjustments[baseGlyph]
+      let globalScale = selected ? max(0.01, 1.0 + params.size / 100.0) : 1.0
+      let individualScale = max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
+      let scale = globalScale * individualScale
+      let rise = (selected ? params.rise : 0) + (adjustment?.y ?? 0)
+      let riseUnits = Int(round(rise / 100.0 * Double(upm)))
+      let xUnits = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
+      let metricOffset = max(0, min(baseGlyph, originalCount - 1)) * 4
+      let advance = readUInt16(hmtx, metricOffset)
+      let leftBearing = readUInt16(hmtx, metricOffset + 2)
+      var mapped: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))] = []
+      for layer in rasterLayers where glyphCount < 65535 {
+        let transformed = layer.contours.map { contour in
+          contour.map { point in
+            OutlinePoint(
+              x: max(-32768, min(32767, Int(round(Double(point.x) * scale)) + xUnits)),
+              y: max(-32768, min(32767, Int(round(globalYMid + (Double(point.y) - globalYMid) * scale)) + riseUnits)),
+              onCurve: point.onCurve
+            )
+          }
+        }
+        let encoded = CoreTextOutlineConverter.encodeGlyph(transformed)
+        guard !encoded.data.isEmpty else { continue }
+        if glyf.count % 2 != 0 { glyf.append(0) }
+        glyf.append(encoded.data)
+        if glyf.count % 2 != 0 { glyf.append(0) }
+        offsets.append(glyf.count)
+        appendUInt16(&hmtx, advance)
+        appendUInt16(&hmtx, leftBearing)
+        mapped.append((glyphCount, layer.color))
+        glyphCount += 1
+      }
+      if !mapped.isEmpty { output[baseGlyph] = mapped }
+    }
+    if glyphCount == originalCount { return output }
+    loca = Data()
+    for offset in offsets { appendUInt32(&loca, UInt32(offset)) }
+    writeUInt16(&head, 50, 1)
+    writeUInt16(&maxp, 4, UInt16(glyphCount))
+    writeUInt16(&hhea, 34, UInt16(glyphCount))
+    tables["head"] = FontTable(tag: "head", checksum: 0, data: head)
+    tables["hhea"] = FontTable(tag: "hhea", checksum: 0, data: hhea)
+    tables["maxp"] = FontTable(tag: "maxp", checksum: 0, data: maxp)
+    tables["hmtx"] = FontTable(tag: "hmtx", checksum: 0, data: hmtx)
+    tables["loca"] = FontTable(tag: "loca", checksum: 0, data: loca)
+    tables["glyf"] = FontTable(tag: "glyf", checksum: 0, data: glyf)
+    return output
+  }
 
+  private static func makeCOLR(_ layersByGlyph: [Int: [(glyph: Int, palette: Int)]]) -> Data {
+    let records = layersByGlyph.keys.sorted().filter { !(layersByGlyph[$0] ?? []).isEmpty }
+    let layerCount = records.reduce(0) { $0 + (layersByGlyph[$1]?.count ?? 0) }
     var table = Data()
-    appendUInt16(&table, 1)
     appendUInt16(&table, 0)
-    appendUInt32(&table, 1)
-    appendUInt32(&table, 12)
-    table.append(strike)
+    appendUInt16(&table, UInt16(records.count))
+    appendUInt32(&table, 14)
+    appendUInt32(&table, UInt32(14 + records.count * 6))
+    appendUInt16(&table, UInt16(layerCount))
+    var firstLayer = 0
+    for glyph in records {
+      let count = layersByGlyph[glyph]?.count ?? 0
+      appendUInt16(&table, UInt16(glyph))
+      appendUInt16(&table, UInt16(firstLayer))
+      appendUInt16(&table, UInt16(count))
+      firstLayer += count
+    }
+    for glyph in records {
+      for layer in layersByGlyph[glyph] ?? [] {
+        appendUInt16(&table, UInt16(layer.glyph))
+        appendUInt16(&table, UInt16(layer.palette))
+      }
+    }
+    return table
+  }
+
+  private static func makeCPAL(_ palette: [(UInt8, UInt8, UInt8, UInt8)]) -> Data {
+    var table = Data()
+    appendUInt16(&table, 0)
+    appendUInt16(&table, UInt16(palette.count))
+    appendUInt16(&table, 1)
+    appendUInt16(&table, UInt16(palette.count))
+    appendUInt32(&table, 14)
+    appendUInt16(&table, 0)
+    for (red, green, blue, alpha) in palette {
+      table.append(blue); table.append(green); table.append(red); table.append(alpha)
+    }
     return table
   }
 
@@ -1108,6 +1198,8 @@ private enum NativeColorFontProcessor {
   }
 
   private static func readUInt16(_ data: Data, _ offset: Int) -> UInt16 { UInt16(data[offset]) << 8 | UInt16(data[offset + 1]) }
+  private static func readUInt32(_ data: Data, _ offset: Int) -> UInt32 { UInt32(data[offset]) << 24 | UInt32(data[offset + 1]) << 16 | UInt32(data[offset + 2]) << 8 | UInt32(data[offset + 3]) }
+  private static func writeUInt16(_ data: inout Data, _ offset: Int, _ value: UInt16) { data[offset] = UInt8((value >> 8) & 255); data[offset + 1] = UInt8(value & 255) }
   private static func appendUInt16(_ data: inout Data, _ value: UInt16) { data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
   private static func appendInt16(_ data: inout Data, _ value: Int16) { appendUInt16(&data, UInt16(bitPattern: value)) }
   private static func appendUInt32(_ data: inout Data, _ value: UInt32) { data.append(UInt8((value >> 24) & 255)); data.append(UInt8((value >> 16) & 255)); data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
@@ -1147,7 +1239,18 @@ private struct OutlinePoint {
   var onCurve: Bool
 }
 
+private struct RasterColorLayer {
+  let color: (UInt8, UInt8, UInt8, UInt8)
+  let contours: [[OutlinePoint]]
+}
+
 private enum RasterGlyphConverter {
+  private struct ColorSample {
+    let red: Double
+    let green: Double
+    let blue: Double
+  }
+
   static func contours(from data: Data, unitsPerEm: Int) throws -> [[OutlinePoint]] {
     guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
     let size = CGSize(width: 512, height: 512)
@@ -1158,10 +1261,171 @@ private enum RasterGlyphConverter {
       image.draw(in: CGRect(origin: .zero, size: size))
     }
     guard let source = flattened.cgImage else { throw NativeFontError.malformedFont }
+    return try contours(from: source, unitsPerEm: unitsPerEm)
+  }
+
+  static func colorLayers(from data: Data, unitsPerEm: Int) throws -> [RasterColorLayer] {
+    guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
+    let dimension = 192
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let normalized = UIGraphicsImageRenderer(
+      size: CGSize(width: dimension, height: dimension),
+      format: format
+    ).image { _ in
+      image.draw(in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
+    }
+    guard let source = normalized.cgImage else { throw NativeFontError.malformedFont }
+    var pixels = [UInt8](repeating: 0, count: dimension * dimension * 4)
+    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+      guard let context = CGContext(
+        data: buffer.baseAddress,
+        width: dimension,
+        height: dimension,
+        bitsPerComponent: 8,
+        bytesPerRow: dimension * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+      ) else { return false }
+      context.draw(source, in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
+      return true
+    }
+    guard rendered else { throw NativeFontError.malformedFont }
+
+    var samples: [ColorSample?] = Array(repeating: nil, count: dimension * dimension)
+    var histogram: [Int: (red: Double, green: Double, blue: Double, count: Int)] = [:]
+    for index in samples.indices {
+      let offset = index * 4
+      let alpha = Int(pixels[offset + 3])
+      guard alpha >= 24 else { continue }
+      let factor = 255.0 / Double(alpha)
+      let red = min(255, Double(pixels[offset]) * factor)
+      let green = min(255, Double(pixels[offset + 1]) * factor)
+      let blue = min(255, Double(pixels[offset + 2]) * factor)
+      samples[index] = ColorSample(red: red, green: green, blue: blue)
+      let key = (Int(red) >> 3) << 10 | (Int(green) >> 3) << 5 | (Int(blue) >> 3)
+      let old = histogram[key] ?? (0, 0, 0, 0)
+      histogram[key] = (old.red + red, old.green + green, old.blue + blue, old.count + 1)
+    }
+    let foregroundCount = samples.compactMap { $0 }.count
+    guard foregroundCount > 0 else { return [] }
+
+    let ranked = histogram.values.sorted { $0.count > $1.count }
+    var centers: [ColorSample] = []
+    for bin in ranked {
+      let candidate = ColorSample(
+        red: bin.red / Double(bin.count),
+        green: bin.green / Double(bin.count),
+        blue: bin.blue / Double(bin.count)
+      )
+      if centers.allSatisfy({ colorDistance($0, candidate) >= 18 }) {
+        centers.append(candidate)
+      }
+      if centers.count == 12 { break }
+    }
+    if centers.isEmpty, let first = ranked.first {
+      centers = [ColorSample(red: first.red / Double(first.count), green: first.green / Double(first.count), blue: first.blue / Double(first.count))]
+    }
+
+    var labels = [Int](repeating: -1, count: samples.count)
+    var counts = [Int](repeating: 0, count: centers.count)
+    for _ in 0..<8 {
+      var sums = Array(repeating: (red: 0.0, green: 0.0, blue: 0.0, count: 0), count: centers.count)
+      for index in samples.indices {
+        guard let sample = samples[index] else { continue }
+        let label = nearestCenter(sample, centers: centers)
+        labels[index] = label
+        sums[label].red += sample.red
+        sums[label].green += sample.green
+        sums[label].blue += sample.blue
+        sums[label].count += 1
+      }
+      for index in centers.indices where sums[index].count > 0 {
+        centers[index] = ColorSample(
+          red: sums[index].red / Double(sums[index].count),
+          green: sums[index].green / Double(sums[index].count),
+          blue: sums[index].blue / Double(sums[index].count)
+        )
+      }
+      counts = sums.map(\.count)
+    }
+
+    let minimumPixels = max(8, Int(Double(foregroundCount) * 0.0015))
+    let retained = centers.indices.filter { counts[$0] >= minimumPixels }
+    guard !retained.isEmpty else { return [] }
+    for index in samples.indices where labels[index] >= 0 && !retained.contains(labels[index]) {
+      guard let sample = samples[index] else { continue }
+      labels[index] = retained.min(by: {
+        colorDistance(sample, centers[$0]) < colorDistance(sample, centers[$1])
+      }) ?? retained[0]
+    }
+
+    var output: [RasterColorLayer] = []
+    for label in retained.sorted(by: { counts[$0] > counts[$1] }) {
+      guard let mask = makeMask(labels: labels, selected: label, width: dimension, height: dimension) else { continue }
+      let layerContours = try contours(from: mask, unitsPerEm: unitsPerEm)
+      guard !layerContours.isEmpty else { continue }
+      let center = centers[label]
+      output.append(RasterColorLayer(
+        color: (
+          UInt8(max(0, min(255, center.red.rounded()))),
+          UInt8(max(0, min(255, center.green.rounded()))),
+          UInt8(max(0, min(255, center.blue.rounded()))),
+          255
+        ),
+        contours: layerContours
+      ))
+    }
+    return output
+  }
+
+  private static func nearestCenter(_ sample: ColorSample, centers: [ColorSample]) -> Int {
+    var best = 0
+    var bestDistance = Double.greatestFiniteMagnitude
+    for index in centers.indices {
+      let distance = colorDistance(sample, centers[index])
+      if distance < bestDistance { best = index; bestDistance = distance }
+    }
+    return best
+  }
+
+  private static func colorDistance(_ lhs: ColorSample, _ rhs: ColorSample) -> Double {
+    let red = lhs.red - rhs.red
+    let green = lhs.green - rhs.green
+    let blue = lhs.blue - rhs.blue
+    return sqrt(red * red * 0.30 + green * green * 0.59 + blue * blue * 0.11)
+  }
+
+  private static func makeMask(labels: [Int], selected: Int, width: Int, height: Int) -> CGImage? {
+    var mask = [UInt8](repeating: 255, count: width * height * 4)
+    for index in labels.indices where labels[index] == selected {
+      let offset = index * 4
+      mask[offset] = 0
+      mask[offset + 1] = 0
+      mask[offset + 2] = 0
+    }
+    guard let provider = CGDataProvider(data: Data(mask) as CFData) else { return nil }
+    return CGImage(
+      width: width,
+      height: height,
+      bitsPerComponent: 8,
+      bitsPerPixel: 32,
+      bytesPerRow: width * 4,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+      provider: provider,
+      decode: nil,
+      shouldInterpolate: false,
+      intent: .defaultIntent
+    )
+  }
+
+  private static func contours(from source: CGImage, unitsPerEm: Int) throws -> [[OutlinePoint]] {
     let request = VNDetectContoursRequest()
     request.contrastAdjustment = 1.2
     request.detectsDarkOnLight = true
-    request.maximumImageDimension = 512
+    request.maximumImageDimension = max(source.width, source.height)
     try VNImageRequestHandler(cgImage: source).perform([request])
     guard let observation = request.results?.first else { return [] }
     let inset = Double(unitsPerEm) * 0.08
@@ -1171,6 +1435,8 @@ private enum RasterGlyphConverter {
       var points = Array(contour.normalizedPoints)
       if depth.isMultiple(of: 2) == false { points.reverse() }
       if points.count >= 3 {
+        let step = max(1, Int(ceil(Double(points.count) / 2048.0)))
+        if step > 1 { points = points.enumerated().compactMap { $0.offset % step == 0 ? $0.element : nil } }
         output.append(points.map { point in
         OutlinePoint(
           x: Int(round(inset + Double(point.x) * body)),
@@ -1415,7 +1681,7 @@ private enum CoreTextOutlineConverter {
     return collector.finish()
   }
 
-  private static func encodeGlyph(_ contours: [[OutlinePoint]]) -> (data: Data, minX: Int, minY: Int, maxX: Int, maxY: Int) {
+  fileprivate static func encodeGlyph(_ contours: [[OutlinePoint]]) -> (data: Data, minX: Int, minY: Int, maxX: Int, maxY: Int) {
     let valid = contours.filter { $0.count >= 3 }
     guard !valid.isEmpty else { return (Data(), 0, 0, 0, 0) }
     let points = valid.flatMap { $0 }

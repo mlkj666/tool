@@ -37,13 +37,17 @@ void main() {
     expect(nativeEngine, contains('VNDetectContoursRequest'));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
-    expect(nativeEngine, contains('makeSbixTable'));
+    expect(nativeEngine, contains('appendImageLayers'));
+    expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
+    expect(nativeEngine, contains('makeCOLR'));
+    expect(nativeEngine, contains('makeCPAL'));
+    expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
     expect(nativeEngine, contains('imagesByGlyph'));
     expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.4+5'));
+    expect(pubspec, contains('version: 1.0.5+6'));
   });
 }
