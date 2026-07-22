@@ -649,6 +649,19 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     });
   }
 
+  void _selectSingleCharacter(String value) {
+    final chars = value.characters;
+    final adjustment = chars.isEmpty
+        ? const <String, double>{}
+        : (_characterAdjustments[chars.first] ?? const <String, double>{});
+    setState(() {
+      _singleSize = adjustment['size'] ?? 0;
+      _singleSpacing = adjustment['spacing'] ?? 0;
+      _singleX = adjustment['x'] ?? 0;
+      _singleY = adjustment['y'] ?? 0;
+    });
+  }
+
   String? _replacementCharacter() {
     final chars = _replacementCharController.text.characters;
     return chars.isEmpty ? null : chars.first;
@@ -929,7 +942,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     return Wrap(
       alignment: WrapAlignment.center,
       runAlignment: WrapAlignment.center,
-      spacing: max(0, _spacing * .25),
+      spacing: 0,
       children: text.characters.map((char) {
         final adjustment = _characterAdjustments[char] ?? const {};
         final size = (baseSize * (1 + (adjustment['size'] ?? 0) / 100))
@@ -943,32 +956,42 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             (_randomPalette.isNotEmpty
                 ? _randomPalette[char.codeUnitAt(0) % _randomPalette.length]
                 : _globalColor);
+        final textStyle = TextStyle(
+          fontFamily: _fontFamily,
+          fontSize: size,
+          color: color,
+          fontWeight: _previewWeight(),
+        );
         final child = replacement != null
             ? liveImage
                   ? _liveReplacementImage(replacement, size)
                   : Image.memory(replacement, width: size, height: size)
-            : Text(
-                char,
-                style: TextStyle(
-                  fontFamily: _fontFamily,
-                  fontSize: size,
-                  color: color,
-                  fontWeight: _previewWeight(),
-                ),
-              );
+            : Text(char, style: textStyle);
+        final painter = TextPainter(
+          text: TextSpan(text: char, style: textStyle),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+        )..layout();
+        final naturalWidth = replacement != null ? size : painter.width;
+        final characterSpacing = liveImage
+            ? _imageSpacing
+            : (adjustment['spacing'] ?? 0);
+        final layoutWidth = max(
+          1.0,
+          naturalWidth + _spacing * .25 + characterSpacing * .2,
+        );
         return Transform.translate(
           offset: Offset(
             (adjustment['x'] ?? 0) * .25,
             -(_rise + (adjustment['y'] ?? 0)) * .25,
           ),
-          child: Padding(
-            padding: EdgeInsets.only(
-              right: max(
-                0,
-                (liveImage ? _imageSpacing : (adjustment['spacing'] ?? 0)) * .2,
-              ),
+          child: SizedBox(
+            width: layoutWidth,
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              maxWidth: double.infinity,
+              child: child,
             ),
-            child: child,
           ),
         );
       }).toList(),
@@ -1043,6 +1066,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       TextField(
         controller: _singleCharController,
         maxLength: 1,
+        onChanged: _selectSingleCharacter,
         decoration: const InputDecoration(
           labelText: '单字调整',
           hintText: '输入一个字符',

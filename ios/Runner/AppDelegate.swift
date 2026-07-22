@@ -1293,61 +1293,33 @@ private enum RasterGlyphConverter {
   }
 
   static func contours(from data: Data, unitsPerEm: Int) throws -> [[OutlinePoint]] {
-    guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
-    let size = CGSize(width: 512, height: 512)
-    let renderer = UIGraphicsImageRenderer(size: size)
-    let flattened = renderer.image { context in
-      UIColor.white.setFill()
-      context.fill(CGRect(origin: .zero, size: size))
-      image.draw(in: CGRect(origin: .zero, size: size))
+    let dimension = 256
+    let raster = try rasterSamples(from: data, dimension: dimension)
+    var labels = [Int](repeating: -1, count: raster.samples.count)
+    for index in raster.samples.indices {
+      guard let sample = raster.samples[index] else { continue }
+      if let background = raster.background, colorDistance(sample, background) < 30 { continue }
+      labels[index] = 0
     }
-    guard let source = flattened.cgImage else { throw NativeFontError.malformedFont }
-    return try contours(from: source, unitsPerEm: unitsPerEm)
+    guard let mask = makeMask(labels: labels, selected: 0, width: dimension, height: dimension) else {
+      throw NativeFontError.malformedFont
+    }
+    return try contours(from: mask, unitsPerEm: unitsPerEm)
   }
 
   static func colorLayers(from data: Data, unitsPerEm: Int) throws -> [RasterColorLayer] {
-    guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
     let dimension = 192
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    format.opaque = false
-    let normalized = UIGraphicsImageRenderer(
-      size: CGSize(width: dimension, height: dimension),
-      format: format
-    ).image { _ in
-      image.draw(in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
+    let raster = try rasterSamples(from: data, dimension: dimension)
+    var samples = raster.samples
+    if let background = raster.background {
+      removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
-    guard let source = normalized.cgImage else { throw NativeFontError.malformedFont }
-    var pixels = [UInt8](repeating: 0, count: dimension * dimension * 4)
-    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
-      guard let context = CGContext(
-        data: buffer.baseAddress,
-        width: dimension,
-        height: dimension,
-        bitsPerComponent: 8,
-        bytesPerRow: dimension * 4,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-      ) else { return false }
-      context.draw(source, in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
-      return true
-    }
-    guard rendered else { throw NativeFontError.malformedFont }
-
-    var samples: [ColorSample?] = Array(repeating: nil, count: dimension * dimension)
     var histogram: [Int: (red: Double, green: Double, blue: Double, count: Int)] = [:]
     for index in samples.indices {
-      let offset = index * 4
-      let alpha = Int(pixels[offset + 3])
-      guard alpha >= 24 else { continue }
-      let factor = 255.0 / Double(alpha)
-      let red = min(255, Double(pixels[offset]) * factor)
-      let green = min(255, Double(pixels[offset + 1]) * factor)
-      let blue = min(255, Double(pixels[offset + 2]) * factor)
-      samples[index] = ColorSample(red: red, green: green, blue: blue)
-      let key = (Int(red) >> 3) << 10 | (Int(green) >> 3) << 5 | (Int(blue) >> 3)
+      guard let sample = samples[index] else { continue }
+      let key = (Int(sample.red) >> 3) << 10 | (Int(sample.green) >> 3) << 5 | (Int(sample.blue) >> 3)
       let old = histogram[key] ?? (0, 0, 0, 0)
-      histogram[key] = (old.red + red, old.green + green, old.blue + blue, old.count + 1)
+      histogram[key] = (old.red + sample.red, old.green + sample.green, old.blue + sample.blue, old.count + 1)
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
@@ -1419,6 +1391,143 @@ private enum RasterGlyphConverter {
       ))
     }
     return output
+  }
+
+  private static func rasterSamples(
+    from data: Data,
+    dimension: Int
+  ) throws -> (samples: [ColorSample?], background: ColorSample?) {
+    guard let image = UIImage(data: data) else { throw NativeFontError.malformedFont }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let normalized = UIGraphicsImageRenderer(
+      size: CGSize(width: dimension, height: dimension),
+      format: format
+    ).image { _ in
+      image.draw(in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
+    }
+    guard let source = normalized.cgImage else { throw NativeFontError.malformedFont }
+    var pixels = [UInt8](repeating: 0, count: dimension * dimension * 4)
+    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+      guard let context = CGContext(
+        data: buffer.baseAddress,
+        width: dimension,
+        height: dimension,
+        bitsPerComponent: 8,
+        bytesPerRow: dimension * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+      ) else { return false }
+      context.draw(source, in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
+      return true
+    }
+    guard rendered else { throw NativeFontError.malformedFont }
+    var samples: [ColorSample?] = Array(repeating: nil, count: dimension * dimension)
+    for index in samples.indices {
+      let offset = index * 4
+      let alpha = Int(pixels[offset + 3])
+      guard alpha >= 24 else { continue }
+      let factor = 255.0 / Double(alpha)
+      samples[index] = ColorSample(
+        red: min(255, Double(pixels[offset]) * factor),
+        green: min(255, Double(pixels[offset + 1]) * factor),
+        blue: min(255, Double(pixels[offset + 2]) * factor)
+      )
+    }
+    return (samples, dominantEdgeBackground(samples, width: dimension, height: dimension))
+  }
+
+  private static func dominantEdgeBackground(
+    _ samples: [ColorSample?],
+    width: Int,
+    height: Int
+  ) -> ColorSample? {
+    guard let bounds = opaqueBounds(samples, width: width, height: height) else { return nil }
+    var edgeIndices: [Int] = []
+    edgeIndices.reserveCapacity((bounds.maxX - bounds.minX + bounds.maxY - bounds.minY + 2) * 2)
+    for x in bounds.minX...bounds.maxX {
+      edgeIndices.append(bounds.minY * width + x)
+      if bounds.maxY != bounds.minY { edgeIndices.append(bounds.maxY * width + x) }
+    }
+    if bounds.maxY - bounds.minY > 1 {
+      for y in (bounds.minY + 1)..<bounds.maxY {
+        edgeIndices.append(y * width + bounds.minX)
+        if bounds.maxX != bounds.minX { edgeIndices.append(y * width + bounds.maxX) }
+      }
+    }
+    var bins: [Int: (red: Double, green: Double, blue: Double, count: Int)] = [:]
+    var opaqueCount = 0
+    for index in edgeIndices {
+      guard let sample = samples[index] else { continue }
+      opaqueCount += 1
+      let key = (Int(sample.red) >> 4) << 8 | (Int(sample.green) >> 4) << 4 | (Int(sample.blue) >> 4)
+      let old = bins[key] ?? (0, 0, 0, 0)
+      bins[key] = (old.red + sample.red, old.green + sample.green, old.blue + sample.blue, old.count + 1)
+    }
+    guard opaqueCount >= edgeIndices.count / 2,
+          let dominant = bins.values.max(by: { $0.count < $1.count }),
+          dominant.count >= opaqueCount / 2 else { return nil }
+    return ColorSample(
+      red: dominant.red / Double(dominant.count),
+      green: dominant.green / Double(dominant.count),
+      blue: dominant.blue / Double(dominant.count)
+    )
+  }
+
+  private static func opaqueBounds(
+    _ samples: [ColorSample?],
+    width: Int,
+    height: Int
+  ) -> (minX: Int, minY: Int, maxX: Int, maxY: Int)? {
+    var minX = width, minY = height, maxX = -1, maxY = -1
+    for index in samples.indices where samples[index] != nil {
+      let x = index % width
+      let y = index / width
+      minX = min(minX, x); minY = min(minY, y)
+      maxX = max(maxX, x); maxY = max(maxY, y)
+    }
+    return maxX >= minX && maxY >= minY ? (minX, minY, maxX, maxY) : nil
+  }
+
+  private static func removeConnectedBackground(
+    _ samples: inout [ColorSample?],
+    color: ColorSample,
+    width: Int,
+    height: Int
+  ) {
+    var working = samples
+    var queued = [Bool](repeating: false, count: working.count)
+    var queue: [Int] = []
+    func enqueue(_ index: Int) {
+      guard !queued[index], let sample = working[index], colorDistance(sample, color) < 32 else { return }
+      queued[index] = true
+      queue.append(index)
+    }
+    guard let bounds = opaqueBounds(working, width: width, height: height) else { return }
+    for x in bounds.minX...bounds.maxX {
+      enqueue(bounds.minY * width + x)
+      enqueue(bounds.maxY * width + x)
+    }
+    if bounds.maxY - bounds.minY > 1 {
+      for y in (bounds.minY + 1)..<bounds.maxY {
+        enqueue(y * width + bounds.minX)
+        enqueue(y * width + bounds.maxX)
+      }
+    }
+    var cursor = 0
+    while cursor < queue.count {
+      let index = queue[cursor]
+      cursor += 1
+      let x = index % width
+      let y = index / width
+      if x > 0 { enqueue(index - 1) }
+      if x + 1 < width { enqueue(index + 1) }
+      if y > 0 { enqueue(index - width) }
+      if y + 1 < height { enqueue(index + width) }
+      working[index] = nil
+    }
+    samples = working
   }
 
   private static func nearestCenter(_ sample: ColorSample, centers: [ColorSample]) -> Int {
