@@ -36,10 +36,16 @@ import Vision
         self.pickImages(source: source, result: result)
       case "pickFont":
         self.pickFont(result: result)
+      case "pickConfig":
+        self.pickDocument(types: [UTType.json], result: result)
+      case "pickZip":
+        self.pickDocument(types: [UTType.zip], result: result)
       case "saveFont":
         self.saveFont(arguments: call.arguments, result: result)
       case "processFont":
         self.processFont(arguments: call.arguments, result: result)
+      case "renameFont":
+        self.renameFont(arguments: call.arguments, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -170,12 +176,16 @@ import Vision
   }
 
   private func pickFont(result: @escaping FlutterResult) {
+    pickDocument(types: [UTType.font], result: result)
+  }
+
+  private func pickDocument(types: [UTType], result: @escaping FlutterResult) {
     guard pendingFontResult == nil else {
       result(FlutterError(code: "busy", message: "正在处理上一次字体选择", details: nil))
       return
     }
     pendingFontResult = result
-    let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.font], asCopy: true)
+    let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
     picker.delegate = self
     picker.allowsMultipleSelection = false
     topViewController()?.present(picker, animated: true)
@@ -200,6 +210,8 @@ import Vision
       let replacements = (args["replacements"] as? [String: String])?.reduce(into: [String: Data]()) { result, entry in
         if let data = Data(base64Encoded: entry.value) { result[entry.key] = data }
       } ?? [:]
+      let characterColors = args["characterColors"] as? [String: String] ?? [:]
+      let randomColors = args["randomColors"] as? [String] ?? []
       let params = NativeFontAdjustParams(
         size: args["size"] as? Double ?? 0,
         weight: args["weight"] as? Double ?? 0,
@@ -209,7 +221,10 @@ import Vision
         targetAll: args["targetAll"] as? Bool ?? true,
         chars: args["chars"] as? String ?? "",
         characterAdjustments: characterAdjustments,
-        replacements: replacements
+        replacements: replacements,
+        globalColor: args["globalColor"] as? String,
+        characterColors: characterColors,
+        randomColors: randomColors
       )
     fontProcessingQueue.async {
       do {
@@ -270,6 +285,9 @@ private struct NativeFontAdjustParams {
   let chars: String
   let characterAdjustments: [String: NativeGlyphAdjustment]
   let replacements: [String: Data]
+  let globalColor: String?
+  let characterColors: [String: String]
+  let randomColors: [String]
 }
 
 private enum NativeFontError: LocalizedError {
@@ -805,6 +823,27 @@ private final class NativeTTFProcessor {
     return out
   }
 
+  private func renameFont(arguments: Any?, result: @escaping FlutterResult) {
+    guard let args = arguments as? [String: Any],
+          let encoded = args["base64"] as? String,
+          let data = Data(base64Encoded: encoded),
+          let family = args["family"] as? String,
+          !family.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      result(FlutterError(code: "bad_args", message: "字体名称不能为空", details: nil)); return
+    }
+    let subfamily = args["subfamily"] as? String ?? "Regular"
+    let fullName = args["fullName"] as? String ?? "\(family) \(subfamily)"
+    let postScript = args["postScript"] as? String ?? "\(family)-\(subfamily)"
+    fontProcessingQueue.async {
+      do {
+        let output = try NativeNameFontProcessor.apply(data: data, family: family, subfamily: subfamily, fullName: fullName, postScript: postScript)
+        DispatchQueue.main.async { result(["base64": output.base64EncodedString()]) }
+      } catch {
+        DispatchQueue.main.async { result(FlutterError(code: "rename_failed", message: error.localizedDescription, details: nil)) }
+      }
+    }
+  }
+
   private static func patchWeightClass(_ os2: Data, weightPercent: Double) -> Data {
     guard os2.count >= 6 else { return os2 }
     var out = os2
@@ -940,8 +979,109 @@ private final class NativeTTFProcessor {
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
     let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments, replacements: params.replacements)
-    return try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
+    let adjusted = try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
+    return try NativeColorFontProcessor.apply(data: adjusted, params: params)
   }
+}
+
+private enum NativeColorFontProcessor {
+  static func apply(data: Data, params: NativeFontAdjustParams) throws -> Data {
+    let hasGlobal = params.globalColor?.uppercased() != nil && params.globalColor?.uppercased() != "#000000"
+    guard hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty else { return data }
+    guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
+    var tables = try NativeTTFProcessor.readTables(data)
+    guard let maxp = tables["maxp"] else { return data }
+    let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
+    let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
+    var glyphColors: [Int: String] = [:]
+    if let global = params.globalColor, hasGlobal {
+      for glyph in 1..<glyphCount { glyphColors[glyph] = global }
+    }
+    if !params.randomColors.isEmpty {
+      for glyph in 1..<glyphCount { glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count] }
+    }
+    for (characters, color) in params.characterColors {
+      for glyph in glyphIDs(for: characters, font: ctFont) { glyphColors[glyph] = color }
+    }
+    guard !glyphColors.isEmpty else { return data }
+
+    var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
+    var paletteIndex: [String: Int] = [:]
+    for color in Set(glyphColors.values).sorted() {
+      paletteIndex[color] = palette.count
+      palette.append(parseColor(color))
+    }
+    let sorted = glyphColors.keys.sorted()
+    var colr = Data()
+    appendUInt16(&colr, 0)
+    appendUInt16(&colr, UInt16(sorted.count))
+    appendUInt32(&colr, 14)
+    appendUInt32(&colr, UInt32(14 + sorted.count * 6))
+    appendUInt16(&colr, UInt16(sorted.count))
+    for (index, glyph) in sorted.enumerated() {
+      appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(index)); appendUInt16(&colr, 1)
+    }
+    for glyph in sorted {
+      appendUInt16(&colr, UInt16(glyph)); appendUInt16(&colr, UInt16(paletteIndex[glyphColors[glyph]!] ?? 0))
+    }
+    var cpal = Data()
+    appendUInt16(&cpal, 0); appendUInt16(&cpal, UInt16(palette.count)); appendUInt16(&cpal, 1)
+    appendUInt16(&cpal, UInt16(palette.count)); appendUInt32(&cpal, 14); appendUInt16(&cpal, 0)
+    for (red, green, blue, alpha) in palette { cpal.append(blue); cpal.append(green); cpal.append(red); cpal.append(alpha) }
+    tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: colr)
+    tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: cpal)
+    return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+  }
+
+  private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
+    let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+    guard hex.count == 6, let number = UInt32(hex, radix: 16) else { return (0, 0, 0, 255) }
+    return (UInt8((number >> 16) & 255), UInt8((number >> 8) & 255), UInt8(number & 255), 255)
+  }
+
+  private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
+    var output = Set<Int>()
+    for scalar in text.unicodeScalars {
+      var characters = scalar.value <= 0xffff ? [UniChar(scalar.value)] : [UniChar(0xD800 + ((scalar.value - 0x10000) >> 10)), UniChar(0xDC00 + ((scalar.value - 0x10000) & 0x3ff))]
+      var glyphs = [CGGlyph](repeating: 0, count: characters.count)
+      if CTFontGetGlyphsForCharacters(font, &characters, &glyphs, characters.count) {
+        for glyph in glyphs where glyph != 0 { output.insert(Int(glyph)) }
+      }
+    }
+    return output
+  }
+
+  private static func readUInt16(_ data: Data, _ offset: Int) -> UInt16 { UInt16(data[offset]) << 8 | UInt16(data[offset + 1]) }
+  private static func appendUInt16(_ data: inout Data, _ value: UInt16) { data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
+  private static func appendUInt32(_ data: inout Data, _ value: UInt32) { data.append(UInt8((value >> 24) & 255)); data.append(UInt8((value >> 16) & 255)); data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
+}
+
+private enum NativeNameFontProcessor {
+  static func apply(data: Data, family: String, subfamily: String, fullName: String, postScript: String) throws -> Data {
+    let unique = "\(postScript);\(Int(Date().timeIntervalSince1970))"
+    let values: [(UInt16, String)] = [(1, family), (2, subfamily), (3, unique), (4, fullName), (6, postScript), (16, family), (17, subfamily)]
+    let encoded = values.map { (id: $0.0, data: utf16BE($0.1)) }
+    let headerSize = 6 + encoded.count * 12
+    var table = Data()
+    appendUInt16(&table, 0); appendUInt16(&table, UInt16(encoded.count)); appendUInt16(&table, UInt16(headerSize))
+    var offset = 0
+    for record in encoded {
+      appendUInt16(&table, 3); appendUInt16(&table, 1); appendUInt16(&table, 0x0409)
+      appendUInt16(&table, record.id); appendUInt16(&table, UInt16(record.data.count)); appendUInt16(&table, UInt16(offset))
+      offset += record.data.count
+    }
+    for record in encoded { table.append(record.data) }
+    var tables = try NativeTTFProcessor.readTables(data)
+    tables["name"] = FontTable(tag: "name", checksum: 0, data: table)
+    return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+  }
+
+  private static func utf16BE(_ value: String) -> Data {
+    var data = Data()
+    for unit in value.utf16 { data.append(UInt8((unit >> 8) & 255)); data.append(UInt8(unit & 255)) }
+    return data
+  }
+  private static func appendUInt16(_ data: inout Data, _ value: UInt16) { data.append(UInt8((value >> 8) & 255)); data.append(UInt8(value & 255)) }
 }
 
 private struct OutlinePoint {

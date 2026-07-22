@@ -13,7 +13,8 @@ void main() {
 
   test('tool workspace is rendered with Flutter components', () {
     expect(panel, contains('class NativeToolPanel extends StatefulWidget'));
-    expect(panel, contains('SegmentedButton<int>'));
+    expect(panel, contains('NavigationBar('));
+    expect(panel, contains("label: '颜色'"));
     expect(panel, contains('CustomPaint'));
     expect(panel, contains('FontLoader'));
   });
@@ -30,10 +31,12 @@ void main() {
     expect(panel, contains('RenderRepaintBoundary'));
     expect(nativeEngine, contains('VNDetectContoursRequest'));
     expect(nativeEngine, contains('replacementContours'));
+    expect(nativeEngine, contains('NativeColorFontProcessor'));
+    expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.1+2'));
+    expect(pubspec, contains('version: 1.0.2+3'));
   });
 }
