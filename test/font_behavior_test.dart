@@ -45,6 +45,17 @@ void main() {
       contains('mask = smoothMask(mask, side, side, radius, 2)'),
     );
     expect(toolHtml, contains('(info.xOffset || 0) * upem / 100'));
+    expect(
+      nativeProcessor,
+      contains('replacementGlyphs: [Int: [[OutlinePoint]]]'),
+    );
+    expect(
+      nativeProcessor,
+      contains(
+        'chunk = CoreTextOutlineConverter.encodeGlyph(replacement).data',
+      ),
+    );
+    expect(nativeProcessor, contains('let needsTransform ='));
   });
 
   test('export and native metadata use the required behavior contract', () {

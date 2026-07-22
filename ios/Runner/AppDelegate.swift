@@ -382,7 +382,13 @@ private struct FontTable {
 }
 
 private final class NativeTTFProcessor {
-  static func adjust(data: Data, params: NativeFontAdjustParams, selectedGlyphs: Set<Int>? = nil, glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]) throws -> Data {
+  static func adjust(
+    data: Data,
+    params: NativeFontAdjustParams,
+    selectedGlyphs: Set<Int>? = nil,
+    glyphAdjustments: [Int: NativeGlyphAdjustment] = [:],
+    replacementGlyphs: [Int: [[OutlinePoint]]] = [:]
+  ) throws -> Data {
     var tables = try NativeTTFProcessor.readTables(data)
     guard let head = tables["head"], let maxp = tables["maxp"], let loca = tables["loca"], let glyf = tables["glyf"] else {
       throw NativeFontError.unsupportedFont
@@ -397,8 +403,8 @@ private final class NativeTTFProcessor {
 
     var averageBolden = 0.0
     let hasIndividualTransforms = glyphAdjustments.values.contains { abs($0.size) > 0.001 || abs($0.x) > 0.001 || abs($0.y) > 0.001 }
-    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 || hasIndividualTransforms {
-      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, upm: upm)
+    if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 || hasIndividualTransforms || !replacementGlyphs.isEmpty {
+      let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, replacementGlyphs: replacementGlyphs, upm: upm)
       if let patched {
         tables["glyf"]?.data = patched.glyf
         tables["loca"]?.data = patched.loca
@@ -455,7 +461,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], upm: Int) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -482,6 +488,9 @@ private final class NativeTTFProcessor {
       var end = min(max(0, offsets[i + 1]), glyf.count)
       if start > end { swap(&start, &end) }
       var chunk = Data(glyf[start..<end])
+      if let replacement = replacementGlyphs[i] {
+        chunk = CoreTextOutlineConverter.encodeGlyph(replacement).data
+      }
       let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
       let adjustment = glyphAdjustments[i]
       let individualScale = max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
@@ -489,7 +498,9 @@ private final class NativeTTFProcessor {
       let effectiveRise = (selected ? riseUnits : 0) + Int(round((adjustment?.y ?? 0) / 100.0 * Double(upm)))
       let xOffset = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
       let effectiveWeight = selected ? weightPercent : 0
-      if (selected || adjustment != nil), let transformed = transformSimpleGlyph(chunk, scale: effectiveScale, riseUnits: effectiveRise, xOffsetUnits: xOffset, weightPercent: effectiveWeight, globalYMid: globalYMid) {
+      let needsTransform = abs(effectiveScale - 1.0) > 0.001 ||
+        effectiveRise != 0 || xOffset != 0 || abs(effectiveWeight) > 0.001
+      if needsTransform, let transformed = transformSimpleGlyph(chunk, scale: effectiveScale, riseUnits: effectiveRise, xOffsetUnits: xOffset, weightPercent: effectiveWeight, globalYMid: globalYMid) {
         chunk = transformed.data
         if abs(transformed.boldenUnits) > 0.001 {
           boldenTotal += transformed.boldenUnits
@@ -1028,9 +1039,74 @@ private final class NativeTTFProcessor {
 
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
+    let tables = try NativeTTFProcessor.readTables(data)
+    if tables["glyf"] != nil,
+       tables["loca"] != nil,
+       abs(params.weight) < 0.001,
+       let provider = CGDataProvider(data: data as CFData),
+       let cgFont = CGFont(provider) {
+      let unitsPerEm = max(1, Int(cgFont.unitsPerEm))
+      let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(unitsPerEm), nil, nil)
+      let selectedGlyphs = params.targetAll ? nil : glyphIDs(for: params.chars, font: ctFont)
+      var glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]
+      for (characters, adjustment) in params.characterAdjustments {
+        for glyph in glyphIDs(for: characters, font: ctFont) {
+          glyphAdjustments[glyph] = adjustment
+        }
+      }
+      var replacementGlyphs: [Int: [[OutlinePoint]]] = [:]
+      for (characters, imageData) in params.replacements {
+        let contours = try RasterGlyphConverter.contours(
+          from: imageData,
+          unitsPerEm: unitsPerEm
+        )
+        for glyph in glyphIDs(for: characters, font: ctFont) {
+          replacementGlyphs[glyph] = contours
+        }
+      }
+      let adjusted = try NativeTTFProcessor.adjust(
+        data: data,
+        params: params,
+        selectedGlyphs: selectedGlyphs,
+        glyphAdjustments: glyphAdjustments,
+        replacementGlyphs: replacementGlyphs
+      )
+      return try NativeColorFontProcessor.apply(data: adjusted, params: params)
+    }
     let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments, replacements: params.replacements)
     let adjusted = try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
     return try NativeColorFontProcessor.apply(data: adjusted, params: params)
+  }
+
+  private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
+    var output = Set<Int>()
+    for scalar in text.unicodeScalars {
+      var characters: [UniChar]
+      if scalar.value <= 0xffff {
+        characters = [UniChar(scalar.value)]
+      } else {
+        let value = scalar.value - 0x10000
+        characters = [
+          UniChar(0xD800 + (value >> 10)),
+          UniChar(0xDC00 + (value & 0x3ff))
+        ]
+      }
+      var glyphs = [CGGlyph](repeating: 0, count: characters.count)
+      let mapped = characters.withUnsafeBufferPointer { characterPointer in
+        glyphs.withUnsafeMutableBufferPointer { glyphPointer in
+          CTFontGetGlyphsForCharacters(
+            font,
+            characterPointer.baseAddress!,
+            glyphPointer.baseAddress!,
+            characters.count
+          )
+        }
+      }
+      if mapped {
+        for glyph in glyphs where glyph != 0 { output.insert(Int(glyph)) }
+      }
+    }
+    return output
   }
 }
 
@@ -1042,6 +1118,8 @@ private enum NativeColorFontProcessor {
     guard hasPalette || hasBitmaps else { return data }
     guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
     var tables = try NativeTTFProcessor.readTables(data)
+    tables.removeValue(forKey: "COLR")
+    tables.removeValue(forKey: "CPAL")
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
@@ -1323,15 +1401,7 @@ private enum RasterGlyphConverter {
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
-    if let grayscale = try grayscaleLayers(
-      samples: samples,
-      foregroundCount: foregroundCount,
-      width: dimension,
-      height: dimension,
-      unitsPerEm: unitsPerEm
-    ) {
-      return grayscale
-    }
+    if isGrayscaleImage(samples, foregroundCount: foregroundCount) { return [] }
 
     let ranked = histogram.values.sorted { $0.count > $1.count }
     var centers: [ColorSample] = []
@@ -1402,89 +1472,17 @@ private enum RasterGlyphConverter {
     return output
   }
 
-  private static func grayscaleLayers(
-    samples: [ColorSample?],
-    foregroundCount: Int,
-    width: Int,
-    height: Int,
-    unitsPerEm: Int
-  ) throws -> [RasterColorLayer]? {
+  private static func isGrayscaleImage(
+    _ samples: [ColorSample?],
+    foregroundCount: Int
+  ) -> Bool {
     let colors = samples.compactMap { $0 }
     let neutralCount = colors.reduce(0) { count, sample in
       let high = max(sample.red, max(sample.green, sample.blue))
       let low = min(sample.red, min(sample.green, sample.blue))
       return count + (high - low <= 18 ? 1 : 0)
     }
-    guard neutralCount * 100 >= foregroundCount * 95 else { return nil }
-
-    var histogram = [Int](repeating: 0, count: 256)
-    var totalLuminance = 0.0
-    for sample in colors {
-      let value = max(0, min(255, Int(round(luminance(sample)))))
-      histogram[value] += 1
-      totalLuminance += Double(value)
-    }
-    guard let minimum = histogram.firstIndex(where: { $0 > 0 }),
-          let maximum = histogram.lastIndex(where: { $0 > 0 }),
-          maximum - minimum >= 48 else { return nil }
-
-    var darkCount = 0
-    var darkSum = 0.0
-    var bestThreshold = (minimum + maximum) / 2
-    var bestVariance = -1.0
-    for threshold in minimum..<maximum {
-      darkCount += histogram[threshold]
-      darkSum += Double(threshold * histogram[threshold])
-      let lightCount = foregroundCount - darkCount
-      guard darkCount > 0, lightCount > 0 else { continue }
-      let darkMean = darkSum / Double(darkCount)
-      let lightMean = (totalLuminance - darkSum) / Double(lightCount)
-      let variance = Double(darkCount * lightCount) * pow(darkMean - lightMean, 2)
-      if variance > bestVariance {
-        bestVariance = variance
-        bestThreshold = threshold
-      }
-    }
-
-    var labels = [Int](repeating: -1, count: samples.count)
-    var sums = Array(repeating: (red: 0.0, green: 0.0, blue: 0.0, count: 0), count: 2)
-    for index in samples.indices {
-      guard let sample = samples[index] else { continue }
-      let label = luminance(sample) <= Double(bestThreshold) ? 0 : 1
-      labels[index] = label
-      sums[label].red += sample.red
-      sums[label].green += sample.green
-      sums[label].blue += sample.blue
-      sums[label].count += 1
-    }
-
-    var output: [RasterColorLayer] = []
-    let minimumPixels = max(8, Int(Double(foregroundCount) * 0.0015))
-    for label in [1, 0] where sums[label].count >= minimumPixels {
-      guard let mask = makeMask(
-        labels: labels,
-        selected: label,
-        width: width,
-        height: height
-      ) else { continue }
-      let layerContours = try contours(from: mask, unitsPerEm: unitsPerEm)
-      guard !layerContours.isEmpty else { continue }
-      let count = Double(sums[label].count)
-      output.append(RasterColorLayer(
-        color: (
-          UInt8(max(0, min(255, (sums[label].red / count).rounded()))),
-          UInt8(max(0, min(255, (sums[label].green / count).rounded()))),
-          UInt8(max(0, min(255, (sums[label].blue / count).rounded()))),
-          255
-        ),
-        contours: layerContours
-      ))
-    }
-    return output.isEmpty ? nil : output
-  }
-
-  private static func luminance(_ sample: ColorSample) -> Double {
-    sample.red * 0.299 + sample.green * 0.587 + sample.blue * 0.114
+    return foregroundCount > 0 && neutralCount * 100 >= foregroundCount * 98
   }
 
   private static func rasterSamples(

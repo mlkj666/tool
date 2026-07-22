@@ -71,14 +71,16 @@ void main() {
     expect(nativeEngine, contains('makeCPAL'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
     expect(nativeEngine, contains('imagesByGlyph'));
-    expect(nativeEngine, contains('grayscaleLayers'));
+    expect(nativeEngine, contains('isGrayscaleImage'));
     expect(nativeEngine, contains('normalizeContourWinding'));
+    expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
+    expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
     expect(panel, contains("'characterColors': _characterColors.map"));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.10+11'));
+    expect(pubspec, contains('version: 1.0.11+12'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
