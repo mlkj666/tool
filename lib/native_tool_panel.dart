@@ -728,6 +728,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       Color(0xFF64748B),
     ];
     final controller = TextEditingController(text: _hex(initial));
+    HSVColor selectedHsv = HSVColor.fromColor(initial);
     String? errorText;
     await showModalBottomSheet<void>(
       context: context,
@@ -750,6 +751,48 @@ class _NativeToolPanelState extends State<NativeToolPanel>
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 16),
+                Text(
+                  '调色盘',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _SaturationValuePicker(
+                  color: selectedHsv,
+                  onChanged: (value) {
+                    setSheetState(() {
+                      selectedHsv = value;
+                      controller.text = _hex(value.toColor());
+                      errorText = null;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Text('色相', style: TextStyle(fontSize: 12)),
+                    Expanded(
+                      child: Slider(
+                        value: selectedHsv.hue.clamp(0, 360).toDouble(),
+                        min: 0,
+                        max: 360,
+                        onChanged: (hue) {
+                          final value = selectedHsv.withHue(hue);
+                          setSheetState(() {
+                            selectedHsv = value;
+                            controller.text = _hex(value.toColor());
+                            errorText = null;
+                          });
+                        },
+                      ),
+                    ),
+                    Text('${selectedHsv.hue.round()}°'),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 Wrap(
                   spacing: 14,
                   runSpacing: 14,
@@ -804,6 +847,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
                       setSheetState(() => errorText = '请输入6位色值，例如 #FF4D8D');
                       return;
                     }
+                    selectedHsv = HSVColor.fromColor(color);
                     onSelected(color);
                     Navigator.pop(sheetContext);
                   },
@@ -816,6 +860,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
                       setSheetState(() => errorText = '请输入6位色值，例如 #FF4D8D');
                       return;
                     }
+                    selectedHsv = HSVColor.fromColor(color);
                     onSelected(color);
                     Navigator.pop(sheetContext);
                   },
@@ -1470,7 +1515,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         controller: _colorCharsController,
         decoration: const InputDecoration(
           labelText: '输入一个或多个字符',
-          hintText: '例如：你好ABC',
+          hintText: '例如：爆闪字体修符',
           border: OutlineInputBorder(),
           isDense: true,
         ),
@@ -1702,6 +1747,99 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       ),
     ],
   );
+}
+
+class _SaturationValuePicker extends StatelessWidget {
+  const _SaturationValuePicker({
+    required this.color,
+    required this.onChanged,
+  });
+
+  final HSVColor color;
+  final ValueChanged<HSVColor> onChanged;
+
+  void _update(Offset position, Size size) {
+    if (size.width <= 0 || size.height <= 0) return;
+    final saturation =
+        (position.dx / size.width).clamp(0.0, 1.0).toDouble();
+    final value = (1 - position.dy / size.height).clamp(0.0, 1.0).toDouble();
+    onChanged(
+      color.withSaturation(saturation).withValue(value),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final size = Size(constraints.maxWidth, 220);
+      return SizedBox(
+        width: double.infinity,
+        height: size.height,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) => _update(details.localPosition, size),
+          onPanStart: (details) => _update(details.localPosition, size),
+          onPanUpdate: (details) => _update(details.localPosition, size),
+          child: CustomPaint(
+            painter: _SaturationValuePainter(color),
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+class _SaturationValuePainter extends CustomPainter {
+  const _SaturationValuePainter(this.color);
+
+  final HSVColor color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final hue = color.withSaturation(1).withValue(1).toColor();
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = const LinearGradient(
+          colors: [Colors.white, Colors.transparent],
+        ).createShader(rect),
+    );
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [hue, Colors.black],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ).createShader(rect),
+    );
+    final marker = Offset(
+      color.saturation * size.width,
+      (1 - color.value) * size.height,
+    );
+    canvas.drawCircle(
+      marker,
+      9,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = Colors.white,
+    );
+    canvas.drawCircle(
+      marker,
+      10,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = Colors.black54,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SaturationValuePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 class _DrawPainter extends CustomPainter {

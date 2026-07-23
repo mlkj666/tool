@@ -1557,9 +1557,9 @@ private enum RasterGlyphConverter {
       guard alpha >= 24 else { continue }
       let factor = 255.0 / Double(alpha)
       samples[index] = ColorSample(
-        red: min(255, Double(pixels[offset + 2]) * factor),
+        red: min(255, Double(pixels[offset]) * factor),
         green: min(255, Double(pixels[offset + 1]) * factor),
-        blue: min(255, Double(pixels[offset]) * factor)
+        blue: min(255, Double(pixels[offset + 2]) * factor)
       )
     }
     return (samples, dominantEdgeBackground(samples, width: dimension, height: dimension))

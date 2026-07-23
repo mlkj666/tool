@@ -58,7 +58,11 @@ void main() {
     expect(nativeProcessor, contains('let needsTransform ='));
     expect(
       nativeProcessor,
-      contains('red: min(255, Double(pixels[offset + 2]) * factor)'),
+      contains('red: min(255, Double(pixels[offset]) * factor)'),
+    );
+    expect(
+      nativeProcessor,
+      contains('blue: min(255, Double(pixels[offset + 2]) * factor)'),
     );
   });
 

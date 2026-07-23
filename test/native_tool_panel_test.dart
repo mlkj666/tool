@@ -42,6 +42,9 @@ void main() {
     expect(panel, contains('_liveReplacementImage'));
     expect(panel, contains('_selectSingleCharacter'));
     expect(panel, contains('_tryParseCustomColor'));
+    expect(panel, contains('_SaturationValuePicker'));
+    expect(panel, contains('HSVColor.fromColor'));
+    expect(panel, contains("hintText: '例如：爆闪字体修符'"));
     expect(panel, contains("labelText: '自定义色值'"));
     expect(panel, contains('bool _globalColorEnabled = false'));
     expect(panel, contains('height: naturalHeight'));
@@ -86,7 +89,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.15+16'));
+    expect(pubspec, contains('version: 1.0.16+17'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
