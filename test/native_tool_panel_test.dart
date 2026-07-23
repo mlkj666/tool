@@ -66,6 +66,8 @@ void main() {
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
     expect(nativeEngine, contains('appendImageLayers'));
+    expect(nativeEngine, contains('let imageLayers = try appendImageLayers'));
+    expect(nativeEngine, contains('metrics.reserveCapacity'));
     expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
     expect(nativeEngine, contains('makeCOLR'));
     expect(nativeEngine, contains('makeCPAL'));
@@ -77,11 +79,14 @@ void main() {
     expect(nativeEngine, isNot(contains('makeSBIX')));
     expect(nativeEngine, contains('!imageGlyphs.contains(glyph)'));
     expect(panel, contains("'characterColors': _characterColors.map"));
+    expect(panel, contains('_imageBytes = null'));
+    expect(panel, contains("_message('还原失败：\$error')"));
+    expect(panel, contains('onPressed: _busy ? null : _resetFont'));
   });
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.14+15'));
+    expect(pubspec, contains('version: 1.0.15+16'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

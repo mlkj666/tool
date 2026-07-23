@@ -1125,8 +1125,12 @@ private enum NativeColorFontProcessor {
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
     var imageGlyphs = Set<Int>()
-    for (characters, _) in params.replacements {
-      imageGlyphs.formUnion(glyphIDs(for: characters, font: ctFont))
+    var imagesByGlyph: [Int: Data] = [:]
+    for (characters, imageData) in params.replacements {
+      for glyph in glyphIDs(for: characters, font: ctFont) {
+        imageGlyphs.insert(glyph)
+        imagesByGlyph[glyph] = imageData
+      }
     }
     var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
     var paletteIndexes: [UInt32: Int] = [:]
@@ -1161,6 +1165,20 @@ private enum NativeColorFontProcessor {
         layersByGlyph[glyph] = [(glyph, paletteIndex(for: parseColor(value)))]
       }
     }
+
+    if !imagesByGlyph.isEmpty {
+      let imageLayers = try appendImageLayers(
+        to: &tables,
+        imagesByGlyph: imagesByGlyph,
+        params: params,
+        font: ctFont
+      )
+      for (baseGlyph, layers) in imageLayers where !layers.isEmpty {
+        layersByGlyph[baseGlyph] = layers.map { layer in
+          (layer.glyph, paletteIndex(for: layer.color))
+        }
+      }
+    }
     if !layersByGlyph.isEmpty && !palette.isEmpty {
       tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: makeCOLR(layersByGlyph))
       tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: makeCPAL(palette))
@@ -1183,6 +1201,23 @@ private enum NativeColorFontProcessor {
     let originalCount = Int(readUInt16(maxp, 4))
     let upm = max(1, Int(readUInt16(head, 18)))
     let globalYMid = Double(Int(Int16(bitPattern: readUInt16(hhea, 4))) + Int(Int16(bitPattern: readUInt16(hhea, 6)))) * 0.5
+    let numberOfHMetrics = max(1, min(Int(readUInt16(hhea, 34)), originalCount))
+    var metrics: [(advance: UInt16, bearing: UInt16)] = []
+    metrics.reserveCapacity(originalCount + imagesByGlyph.count * 12)
+    for glyph in 0..<originalCount {
+      let advanceOffset = min(glyph, numberOfHMetrics - 1) * 4
+      let bearingOffset = glyph < numberOfHMetrics
+        ? advanceOffset + 2
+        : numberOfHMetrics * 4 + (glyph - numberOfHMetrics) * 2
+      guard advanceOffset + 2 <= hmtx.count,
+            bearingOffset + 2 <= hmtx.count else {
+        throw NativeFontError.malformedFont
+      }
+      metrics.append((
+        readUInt16(hmtx, advanceOffset),
+        readUInt16(hmtx, bearingOffset)
+      ))
+    }
     let selectedGlyphs = params.targetAll ? nil : glyphIDs(for: params.chars, font: font)
     var glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]
     for (characters, adjustment) in params.characterAdjustments {
@@ -1207,9 +1242,7 @@ private enum NativeColorFontProcessor {
       let rise = (selected ? params.rise : 0) + (adjustment?.y ?? 0)
       let riseUnits = Int(round(rise / 100.0 * Double(upm)))
       let xUnits = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
-      let metricOffset = max(0, min(baseGlyph, originalCount - 1)) * 4
-      let advance = readUInt16(hmtx, metricOffset)
-      let leftBearing = readUInt16(hmtx, metricOffset + 2)
+      let baseMetric = metrics[max(0, min(baseGlyph, originalCount - 1))]
       var mapped: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))] = []
       for layer in rasterLayers where glyphCount < 65535 {
         let transformed = layer.contours.map { contour in
@@ -1227,8 +1260,7 @@ private enum NativeColorFontProcessor {
         glyf.append(encoded.data)
         if glyf.count % 2 != 0 { glyf.append(0) }
         offsets.append(glyf.count)
-        appendUInt16(&hmtx, advance)
-        appendUInt16(&hmtx, leftBearing)
+        metrics.append(baseMetric)
         mapped.append((glyphCount, layer.color))
         glyphCount += 1
       }
@@ -1237,6 +1269,11 @@ private enum NativeColorFontProcessor {
     if glyphCount == originalCount { return output }
     loca = Data()
     for offset in offsets { appendUInt32(&loca, UInt32(offset)) }
+    hmtx = Data()
+    for metric in metrics {
+      appendUInt16(&hmtx, metric.advance)
+      appendUInt16(&hmtx, metric.bearing)
+    }
     writeUInt16(&head, 50, 1)
     writeUInt16(&maxp, 4, UInt16(glyphCount))
     writeUInt16(&hhea, 34, UInt16(glyphCount))
@@ -1364,10 +1401,17 @@ private enum RasterGlyphConverter {
   static func contours(from data: Data, unitsPerEm: Int) throws -> [[OutlinePoint]] {
     let dimension = 256
     let raster = try rasterSamples(from: data, dimension: dimension)
-    var labels = [Int](repeating: -1, count: raster.samples.count)
-    for index in raster.samples.indices {
-      guard let sample = raster.samples[index] else { continue }
-      if let background = raster.background, colorDistance(sample, background) < 30 { continue }
+    var samples = raster.samples
+    if let background = raster.background {
+      removeConnectedBackground(
+        &samples,
+        color: background,
+        width: dimension,
+        height: dimension
+      )
+    }
+    var labels = [Int](repeating: -1, count: samples.count)
+    for index in samples.indices where samples[index] != nil {
       labels[index] = 0
     }
     guard let mask = makeMask(labels: labels, selected: 0, width: dimension, height: dimension) else {

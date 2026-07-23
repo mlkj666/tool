@@ -643,29 +643,50 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   }
 
   Future<void> _resetFont() async {
+    if (_busy) return;
     final bytes = _originalFontBytes;
-    if (bytes == null) return;
-    final family = 'BSFont_${DateTime.now().microsecondsSinceEpoch}';
-    final loader = FontLoader(family)
-      ..addFont(
-        Future.value(
-          ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes),
-        ),
-      );
-    await loader.load();
-    if (!mounted) return;
-    setState(() {
-      _fontBytes = Uint8List.fromList(bytes);
-      _fontFamily = family;
-      _size = _weight = _spacing = _rise = _line = 0;
-      _characterAdjustments.clear();
-      _characterColors.clear();
-      _randomPalette.clear();
-      _replacements.clear();
-      _globalColor = Colors.black;
-      _globalColorEnabled = false;
-      _singleSize = _singleSpacing = _singleX = _singleY = 0;
-    });
+    if (bytes == null) return _message('请先导入字体');
+    setState(() => _busy = true);
+    try {
+      final family = 'BSFont_${DateTime.now().microsecondsSinceEpoch}';
+      final loader = FontLoader(family)
+        ..addFont(
+          Future.value(
+            ByteData.view(
+              bytes.buffer,
+              bytes.offsetInBytes,
+              bytes.lengthInBytes,
+            ),
+          ),
+        );
+      await loader.load();
+      if (!mounted) return;
+      setState(() {
+        _fontBytes = Uint8List.fromList(bytes);
+        _fontFamily = family;
+        _size = _weight = _spacing = _rise = _line = 0;
+        _characterAdjustments.clear();
+        _characterColors.clear();
+        _randomPalette.clear();
+        _replacements.clear();
+        _imageBytes = null;
+        _replacementCharController.clear();
+        _singleCharController.clear();
+        _drawPoints.clear();
+        _drawUndo.clear();
+        _drawRedo.clear();
+        _globalColor = Colors.black;
+        _globalColorEnabled = false;
+        _imageScale = 1;
+        _imageSpacing = _imageX = _imageY = 0;
+        _singleSize = _singleSpacing = _singleX = _singleY = 0;
+      });
+      _message('已还原到刚导入的原始字体');
+    } catch (error) {
+      _message('还原失败：$error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   String _hex(Color color) =>
@@ -1284,7 +1305,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: _resetFont,
+              onPressed: _busy ? null : _resetFont,
               icon: const Icon(Icons.restart_alt),
               label: const Text('重置字体'),
             ),
