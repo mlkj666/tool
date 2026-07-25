@@ -3,7 +3,6 @@ import CoreText
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
-import Vision
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
@@ -413,9 +412,9 @@ private final class NativeTTFProcessor {
       }
     }
 
-    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001 || !glyphAdjustments.isEmpty,
+    if spacingUnits != 0 || abs(scale - 1.0) > 0.001 || abs(averageBolden) > 0.001 || !glyphAdjustments.isEmpty || !replacementGlyphs.isEmpty,
        let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
-      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, upm: upm)
+      let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, replacementGlyphs: replacementGlyphs, upm: upm)
       tables["hmtx"]?.data = patchedHmtx
       tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
     }
@@ -488,16 +487,17 @@ private final class NativeTTFProcessor {
       var end = min(max(0, offsets[i + 1]), glyf.count)
       if start > end { swap(&start, &end) }
       var chunk = Data(glyf[start..<end])
+      let isReplacement = replacementGlyphs[i] != nil
       if let replacement = replacementGlyphs[i] {
         chunk = CoreTextOutlineConverter.encodeGlyph(replacement).data
       }
       let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
       let adjustment = glyphAdjustments[i]
       let individualScale = max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
-      let effectiveScale = (selected ? scale : 1.0) * individualScale
-      let effectiveRise = (selected ? riseUnits : 0) + Int(round((adjustment?.y ?? 0) / 100.0 * Double(upm)))
-      let xOffset = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
-      let effectiveWeight = selected ? weightPercent : 0
+      let effectiveScale = isReplacement ? 1.0 : (selected ? scale : 1.0) * individualScale
+      let effectiveRise = isReplacement ? 0 : (selected ? riseUnits : 0) + Int(round((adjustment?.y ?? 0) / 100.0 * Double(upm)))
+      let xOffset = isReplacement ? 0 : Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
+      let effectiveWeight = isReplacement ? 0 : (selected ? weightPercent : 0)
       let needsTransform = abs(effectiveScale - 1.0) > 0.001 ||
         effectiveRise != 0 || xOffset != 0 || abs(effectiveWeight) > 0.001
       if needsTransform, let transformed = transformSimpleGlyph(chunk, scale: effectiveScale, riseUnits: effectiveRise, xOffsetUnits: xOffset, weightPercent: effectiveWeight, globalYMid: globalYMid) {
@@ -756,7 +756,7 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], upm: Int) -> Data {
+  private static func patchHmtx(hmtx: Data, hhea: Data, scale: Double, spacingUnits: Int, boldenUnits: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> Data {
     guard hhea.count >= 36 else { return hmtx }
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var out = hmtx
@@ -768,6 +768,19 @@ private final class NativeTTFProcessor {
       let p = i * 4
       let oldWidth = Int(readUInt16(out, p))
       let appliedScale = (selected ? scale : 1.0) * max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
+      if let replacement = replacementGlyphs[i] {
+        let points = replacement.flatMap { $0 }
+        let minX = points.map(\.x).min() ?? 0
+        let maxX = points.map(\.x).max() ?? minX
+        let inkWidth = max(1, maxX - minX)
+        let spacingScale = max(0.3, appliedScale)
+        let unscaledInk = Double(inkWidth) / max(0.05, appliedScale)
+        let advance = Int(round(spacingScale * max(Double(oldWidth), unscaledInk))) +
+          (selected ? spacingUnits : 0) + characterSpacingUnits
+        writeUInt16(&out, p, UInt16(max(1, min(65535, advance))))
+        writeInt16(&out, p + 2, minX)
+        continue
+      }
       let appliedBolden = selected ? boldenUnits : 0
       let appliedSpacing = selected ? spacingUnits : 0
       let width = Int(round(Double(oldWidth) * appliedScale + appliedBolden)) + appliedSpacing + characterSpacingUnits
@@ -1056,12 +1069,36 @@ private enum NativeOutlineFontProcessor {
       }
       var replacementGlyphs: [Int: [[OutlinePoint]]] = [:]
       for (characters, imageData) in params.replacements {
-        let contours = try RasterGlyphConverter.contours(
-          from: imageData,
-          unitsPerEm: unitsPerEm
-        )
         for glyph in glyphIDs(for: characters, font: ctFont) {
-          replacementGlyphs[glyph] = contours
+          var mutableGlyph = CGGlyph(glyph)
+          var glyphBox = CTFontGetBoundingRectsForGlyphs(
+            ctFont,
+            .horizontal,
+            &mutableGlyph,
+            nil,
+            1
+          )
+          if glyphBox.isNull || glyphBox.width <= 0 || glyphBox.height <= 0 {
+            glyphBox = CGRect(
+              x: 0,
+              y: -CGFloat(unitsPerEm) * 0.2,
+              width: CGFloat(unitsPerEm),
+              height: CGFloat(unitsPerEm)
+            )
+          }
+          let adjustment = glyphAdjustments[glyph]
+          let userScale = max(0.05, 1.0 + params.size / 100.0) *
+            max(0.05, 1.0 + (adjustment?.size ?? 0) / 100.0)
+          let xUnits = (adjustment?.x ?? 0) / 100.0 * Double(unitsPerEm)
+          let yUnits = (params.rise + (adjustment?.y ?? 0)) / 100.0 * Double(unitsPerEm)
+          replacementGlyphs[glyph] = try RasterGlyphConverter.contours(
+            from: imageData,
+            unitsPerEm: unitsPerEm,
+            glyphBox: glyphBox,
+            userScale: userScale,
+            offsetX: xUnits,
+            offsetY: yUnits
+          )
         }
       }
       let adjusted = try NativeTTFProcessor.adjust(
@@ -1200,7 +1237,6 @@ private enum NativeColorFontProcessor {
           var glyf = tables["glyf"]?.data else { throw NativeFontError.malformedFont }
     let originalCount = Int(readUInt16(maxp, 4))
     let upm = max(1, Int(readUInt16(head, 18)))
-    let globalYMid = Double(Int(Int16(bitPattern: readUInt16(hhea, 4))) + Int(Int16(bitPattern: readUInt16(hhea, 6)))) * 0.5
     let numberOfHMetrics = max(1, min(Int(readUInt16(hhea, 34)), originalCount))
     var metrics: [(advance: UInt16, bearing: UInt16)] = []
     metrics.reserveCapacity(originalCount + imagesByGlyph.count * 12)
@@ -1218,11 +1254,6 @@ private enum NativeColorFontProcessor {
         readUInt16(hmtx, bearingOffset)
       ))
     }
-    let selectedGlyphs = params.targetAll ? nil : glyphIDs(for: params.chars, font: font)
-    var glyphAdjustments: [Int: NativeGlyphAdjustment] = [:]
-    for (characters, adjustment) in params.characterAdjustments {
-      for glyph in glyphIDs(for: characters, font: font) { glyphAdjustments[glyph] = adjustment }
-    }
     let longLoca = Int16(bitPattern: readUInt16(head, 50)) == 1
     var offsets = [Int](repeating: 0, count: originalCount + 1)
     for index in 0...originalCount {
@@ -1234,22 +1265,30 @@ private enum NativeColorFontProcessor {
     for (baseGlyph, imageData) in imagesByGlyph.sorted(by: { $0.key < $1.key }) {
       let rasterLayers = try RasterGlyphConverter.colorLayers(from: imageData, unitsPerEm: upm)
       guard !rasterLayers.isEmpty else { continue }
-      let selected = selectedGlyphs == nil || selectedGlyphs!.contains(baseGlyph)
-      let adjustment = glyphAdjustments[baseGlyph]
-      let globalScale = selected ? max(0.01, 1.0 + params.size / 100.0) : 1.0
-      let individualScale = max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
-      let scale = globalScale * individualScale
-      let rise = (selected ? params.rise : 0) + (adjustment?.y ?? 0)
-      let riseUnits = Int(round(rise / 100.0 * Double(upm)))
-      let xUnits = Int(round((adjustment?.x ?? 0) / 100.0 * Double(upm)))
       let baseMetric = metrics[max(0, min(baseGlyph, originalCount - 1))]
+      var mutableGlyph = CGGlyph(baseGlyph)
+      var targetBox = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &mutableGlyph, nil, 1)
+      if targetBox.isNull || targetBox.width <= 0 || targetBox.height <= 0 {
+        targetBox = CGRect(x: 0, y: -CGFloat(upm) * 0.2, width: CGFloat(upm), height: CGFloat(upm))
+      }
+      let allPoints = rasterLayers.flatMap { $0.contours.flatMap { $0 } }
+      let sourceMinX = allPoints.map(\.x).min() ?? 0
+      let sourceMaxX = allPoints.map(\.x).max() ?? max(1, rasterLayers[0].sourceWidth)
+      let sourceMinY = allPoints.map(\.y).min() ?? 0
+      let sourceMaxY = allPoints.map(\.y).max() ?? max(1, rasterLayers[0].sourceHeight)
+      let sourceWidth = max(1, sourceMaxX - sourceMinX)
+      let sourceHeight = max(1, sourceMaxY - sourceMinY)
       var mapped: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))] = []
       for layer in rasterLayers where glyphCount < 65535 {
         let transformed = layer.contours.map { contour in
           contour.map { point in
             OutlinePoint(
-              x: max(-32768, min(32767, Int(round(Double(point.x) * scale)) + xUnits)),
-              y: max(-32768, min(32767, Int(round(globalYMid + (Double(point.y) - globalYMid) * scale)) + riseUnits)),
+              x: max(-32768, min(32767, Int(round(
+                Double(targetBox.minX) + Double(point.x - sourceMinX) / Double(sourceWidth) * Double(targetBox.width)
+              )))),
+              y: max(-32768, min(32767, Int(round(
+                Double(targetBox.maxY) - Double(point.y - sourceMinY) / Double(sourceHeight) * Double(targetBox.height)
+              )))),
               onCurve: point.onCurve
             )
           }
@@ -1389,6 +1428,8 @@ private struct OutlinePoint {
 private struct RasterColorLayer {
   let color: (UInt8, UInt8, UInt8, UInt8)
   let contours: [[OutlinePoint]]
+  let sourceWidth: Int
+  let sourceHeight: Int
 }
 
 private enum RasterGlyphConverter {
@@ -1410,14 +1451,43 @@ private enum RasterGlyphConverter {
         height: dimension
       )
     }
-    var labels = [Int](repeating: -1, count: samples.count)
-    for index in samples.indices where samples[index] != nil {
-      labels[index] = 0
+    let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
+    let sourceContours = traceContours(mask, width: dimension, height: dimension)
+    return mapContours(
+      sourceContours,
+      sourceWidth: dimension,
+      sourceHeight: dimension,
+      targetBox: CGRect(x: 0, y: 0, width: CGFloat(unitsPerEm), height: CGFloat(unitsPerEm)),
+      userScale: 1,
+      offsetX: 0,
+      offsetY: 0
+    )
+  }
+
+  static func contours(
+    from data: Data,
+    unitsPerEm: Int,
+    glyphBox: CGRect,
+    userScale: Double,
+    offsetX: Double,
+    offsetY: Double
+  ) throws -> [[OutlinePoint]] {
+    let dimension = 256
+    let raster = try rasterSamples(from: data, dimension: dimension)
+    var samples = raster.samples
+    if let background = raster.background {
+      removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
-    guard let mask = makeMask(labels: labels, selected: 0, width: dimension, height: dimension) else {
-      throw NativeFontError.malformedFont
-    }
-    return try contours(from: mask, unitsPerEm: unitsPerEm)
+    let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
+    return mapContours(
+      traceContours(mask, width: dimension, height: dimension),
+      sourceWidth: dimension,
+      sourceHeight: dimension,
+      targetBox: glyphBox,
+      userScale: userScale,
+      offsetX: offsetX,
+      offsetY: offsetY
+    )
   }
 
   static func colorLayers(from data: Data, unitsPerEm: Int) throws -> [RasterColorLayer] {
@@ -1436,7 +1506,17 @@ private enum RasterGlyphConverter {
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
-    if isGrayscaleImage(samples, foregroundCount: foregroundCount) { return [] }
+    if isGrayscaleImage(samples, foregroundCount: foregroundCount) {
+      let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
+      let layerContours = traceContours(mask, width: dimension, height: dimension)
+      guard !layerContours.isEmpty else { return [] }
+      return [RasterColorLayer(
+        color: (0, 0, 0, 255),
+        contours: layerContours,
+        sourceWidth: dimension,
+        sourceHeight: dimension
+      )]
+    }
 
     let ranked = histogram.values.sorted { $0.count > $1.count }
     var centers: [ColorSample] = []
@@ -1490,8 +1570,9 @@ private enum RasterGlyphConverter {
 
     var output: [RasterColorLayer] = []
     for label in retained.sorted(by: { counts[$0] > counts[$1] }) {
-      guard let mask = makeMask(labels: labels, selected: label, width: dimension, height: dimension) else { continue }
-      let layerContours = try contours(from: mask, unitsPerEm: unitsPerEm)
+      let selectedMask = labels.map { $0 == label }
+      let mask = cleanMask(selectedMask, width: dimension, height: dimension)
+      let layerContours = traceContours(mask, width: dimension, height: dimension)
       guard !layerContours.isEmpty else { continue }
       let center = centers[label]
       output.append(RasterColorLayer(
@@ -1501,10 +1582,157 @@ private enum RasterGlyphConverter {
           UInt8(max(0, min(255, center.blue.rounded()))),
           255
         ),
-        contours: layerContours
+        contours: layerContours,
+        sourceWidth: dimension,
+        sourceHeight: dimension
       ))
     }
     return output
+  }
+
+  private static func cleanMask(_ input: [Bool], width: Int, height: Int) -> [Bool] {
+    guard input.count == width * height else { return input }
+    var output = input
+    for _ in 0..<2 {
+      var next = output
+      for y in 0..<height {
+        for x in 0..<width {
+          let index = y * width + x
+          guard output[index] else { continue }
+          var neighbours = 0
+          for dy in -1...1 {
+            for dx in -1...1 where dx != 0 || dy != 0 {
+              let nx = x + dx
+              let ny = y + dy
+              if nx >= 0, nx < width, ny >= 0, ny < height,
+                 output[ny * width + nx] { neighbours += 1 }
+            }
+          }
+          if neighbours == 0 { next[index] = false }
+        }
+      }
+      output = next
+    }
+    return output
+  }
+
+  private static func traceContours(
+    _ mask: [Bool],
+    width: Int,
+    height: Int
+  ) -> [[OutlinePoint]] {
+    guard mask.count == width * height else { return [] }
+    func key(_ x: Int, _ y: Int) -> Int64 {
+      (Int64(x + 1) << 32) | Int64(UInt32(y + 1))
+    }
+    func point(_ value: Int64) -> OutlinePoint {
+      OutlinePoint(
+        x: Int(Int32(truncatingIfNeeded: value >> 32)) - 1,
+        y: Int(Int32(truncatingIfNeeded: value & 0xffffffff)) - 1,
+        onCurve: true
+      )
+    }
+    var edges: [Int64: [Int64]] = [:]
+    func addEdge(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) {
+      edges[key(x0, y0), default: []].append(key(x1, y1))
+    }
+    for y in 0..<height {
+      for x in 0..<width where mask[y * width + x] {
+        if y == 0 || !mask[(y - 1) * width + x] { addEdge(x, y, x + 1, y) }
+        if x + 1 == width || !mask[y * width + x + 1] { addEdge(x + 1, y, x + 1, y + 1) }
+        if y + 1 == height || !mask[(y + 1) * width + x] { addEdge(x + 1, y + 1, x, y + 1) }
+        if x == 0 || !mask[y * width + x - 1] { addEdge(x, y + 1, x, y) }
+      }
+    }
+
+    var output: [[OutlinePoint]] = []
+    while let start = edges.first(where: { !$0.value.isEmpty })?.key {
+      var contour: [OutlinePoint] = []
+      var current = start
+      var guardCount = 0
+      while guardCount <= width * height * 4 {
+        guard var candidates = edges[current], !candidates.isEmpty else { break }
+        let next = candidates.removeLast()
+        edges[current] = candidates
+        contour.append(point(current))
+        current = next
+        guardCount += 1
+        if current == start { break }
+      }
+      if contour.count >= 3 {
+        let epsilon = max(1.0, Double(max(width, height)) / 256.0)
+        let simplified = rdpSimplify(contour, epsilon: epsilon)
+        if simplified.count >= 3 { output.append(simplified) }
+      }
+    }
+    return normalizeContourWinding(output)
+  }
+
+  private static func rdpSimplify(_ points: [OutlinePoint], epsilon: Double) -> [OutlinePoint] {
+    guard points.count > 3 else { return points }
+    let closed = points + [points[0]]
+    func distance(_ point: OutlinePoint, _ start: OutlinePoint, _ end: OutlinePoint) -> Double {
+      let px = Double(point.x), py = Double(point.y)
+      let sx = Double(start.x), sy = Double(start.y)
+      let ex = Double(end.x), ey = Double(end.y)
+      let dx = ex - sx, dy = ey - sy
+      if dx == 0, dy == 0 { return hypot(px - sx, py - sy) }
+      let t = max(0, min(1, ((px - sx) * dx + (py - sy) * dy) / (dx * dx + dy * dy)))
+      return hypot(px - (sx + t * dx), py - (sy + t * dy))
+    }
+    func simplify(_ values: ArraySlice<OutlinePoint>) -> [OutlinePoint] {
+      guard values.count > 2, let first = values.first, let last = values.last else { return Array(values) }
+      var farthest = 0.0
+      var index = values.startIndex
+      var candidateIndex = values.index(after: values.startIndex)
+      while candidateIndex < values.index(before: values.endIndex) {
+        let candidate = values[candidateIndex]
+        let value = distance(candidate, first, last)
+        if value > farthest {
+          farthest = value
+          index = candidateIndex
+        }
+        candidateIndex = values.index(after: candidateIndex)
+      }
+      guard farthest > epsilon else { return [first, last] }
+      let left = simplify(values[...index])
+      let right = simplify(values[index...])
+      return Array(left.dropLast()) + right
+    }
+    var result = simplify(ArraySlice(closed))
+    if result.last?.x == result.first?.x, result.last?.y == result.first?.y { result.removeLast() }
+    return result.count >= 3 ? result : points
+  }
+
+  private static func mapContours(
+    _ contours: [[OutlinePoint]],
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetBox: CGRect,
+    userScale: Double,
+    offsetX: Double,
+    offsetY: Double
+  ) -> [[OutlinePoint]] {
+    let targetHeight = max(1.0, Double(targetBox.height))
+    let scale = max(0.05, userScale) * targetHeight / (0.8 * Double(max(1, sourceHeight)))
+    let centerX = Double(targetBox.midX)
+    let centerY = Double(targetBox.midY)
+    let sourceCenterX = Double(sourceWidth) * 0.5
+    let sourceCenterY = Double(sourceHeight) * 0.5
+    let mapped = contours.map { contour in
+      contour.map { point in
+        OutlinePoint(
+          x: clamp(Int(round(centerX + (Double(point.x) - sourceCenterX) * scale + offsetX))),
+          y: clamp(Int(round(centerY - (Double(point.y) - sourceCenterY) * scale + offsetY))),
+          onCurve: true
+        )
+      }
+    }
+    return normalizeContourWinding(mapped)
+  }
+
+  private static func clamp(_ value: Int) -> Int {
+    max(-32768, min(32767, value))
   }
 
   private static func isGrayscaleImage(
@@ -1672,59 +1900,6 @@ private enum RasterGlyphConverter {
     let green = lhs.green - rhs.green
     let blue = lhs.blue - rhs.blue
     return sqrt(red * red * 0.30 + green * green * 0.59 + blue * blue * 0.11)
-  }
-
-  private static func makeMask(labels: [Int], selected: Int, width: Int, height: Int) -> CGImage? {
-    var mask = [UInt8](repeating: 255, count: width * height * 4)
-    for index in labels.indices where labels[index] == selected {
-      let offset = index * 4
-      mask[offset] = 0
-      mask[offset + 1] = 0
-      mask[offset + 2] = 0
-    }
-    guard let provider = CGDataProvider(data: Data(mask) as CFData) else { return nil }
-    return CGImage(
-      width: width,
-      height: height,
-      bitsPerComponent: 8,
-      bitsPerPixel: 32,
-      bytesPerRow: width * 4,
-      space: CGColorSpaceCreateDeviceRGB(),
-      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
-      provider: provider,
-      decode: nil,
-      shouldInterpolate: false,
-      intent: .defaultIntent
-    )
-  }
-
-  private static func contours(from source: CGImage, unitsPerEm: Int) throws -> [[OutlinePoint]] {
-    let request = VNDetectContoursRequest()
-    request.contrastAdjustment = 1.2
-    request.detectsDarkOnLight = true
-    request.maximumImageDimension = max(source.width, source.height)
-    try VNImageRequestHandler(cgImage: source).perform([request])
-    guard let observation = request.results?.first else { return [] }
-    let inset = Double(unitsPerEm) * 0.08
-    let body = Double(unitsPerEm) - inset * 2
-    var output: [[OutlinePoint]] = []
-    func append(_ contour: VNContour) {
-      var points = Array(contour.normalizedPoints)
-      if points.count >= 3 {
-        let step = max(1, Int(ceil(Double(points.count) / 2048.0)))
-        if step > 1 { points = points.enumerated().compactMap { $0.offset % step == 0 ? $0.element : nil } }
-        output.append(points.map { point in
-        OutlinePoint(
-          x: Int(round(inset + Double(point.x) * body)),
-          y: Int(round(inset + Double(point.y) * body)),
-          onCurve: true
-        )
-        })
-      }
-      for child in contour.childContours { append(child) }
-    }
-    for contour in observation.topLevelContours { append(contour) }
-    return normalizeContourWinding(output)
   }
 
   private static func normalizeContourWinding(

@@ -65,7 +65,12 @@ void main() {
     expect(panel, contains('Icons.remove_circle_outline'));
     expect(panel, contains('Icons.add_circle_outline'));
     expect(panel, contains('_accountLine'));
-    expect(nativeEngine, contains('VNDetectContoursRequest'));
+    expect(nativeEngine, contains('traceContours(mask'));
+    expect(nativeEngine, contains('rdpSimplify(contour'));
+    expect(nativeEngine, contains('Double(max(width, height)) / 256.0'));
+    expect(nativeEngine, contains('targetHeight / (0.8 *'));
+    expect(nativeEngine, contains('let spacingScale = max(0.3, appliedScale)'));
+    expect(nativeEngine, isNot(contains('VNDetectContoursRequest')));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
     expect(nativeEngine, contains('appendImageLayers'));
@@ -89,7 +94,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.16+17'));
+    expect(pubspec, contains('version: 1.0.17+18'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
