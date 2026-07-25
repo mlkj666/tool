@@ -1506,17 +1506,7 @@ private enum RasterGlyphConverter {
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
-    if isGrayscaleImage(samples, foregroundCount: foregroundCount) {
-      let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
-      let layerContours = traceContours(mask, width: dimension, height: dimension)
-      guard !layerContours.isEmpty else { return [] }
-      return [RasterColorLayer(
-        color: (0, 0, 0, 255),
-        contours: layerContours,
-        sourceWidth: dimension,
-        sourceHeight: dimension
-      )]
-    }
+    if isGrayscaleImage(samples, foregroundCount: foregroundCount) { return [] }
 
     let ranked = histogram.values.sorted { $0.count > $1.count }
     var centers: [ColorSample] = []
