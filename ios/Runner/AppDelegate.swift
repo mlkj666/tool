@@ -1762,7 +1762,9 @@ private enum RasterGlyphConverter {
         bitsPerComponent: 8,
         bytesPerRow: dimension * 4,
         space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        // Use an explicit little-endian BGRA buffer. This keeps the byte
+        // order deterministic on both simulator and device.
+        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
       ) else { return false }
       context.draw(source, in: CGRect(x: 0, y: 0, width: dimension, height: dimension))
       return true
@@ -1774,10 +1776,12 @@ private enum RasterGlyphConverter {
       let alpha = Int(pixels[offset + 3])
       guard alpha >= 24 else { continue }
       let factor = 255.0 / Double(alpha)
+      // The explicit bitmap format above stores bytes as BGRA. Unpremultiply
+      // them after reading so CPAL receives the original RGB values.
       samples[index] = ColorSample(
-        red: min(255, Double(pixels[offset]) * factor),
+        red: min(255, Double(pixels[offset + 2]) * factor),
         green: min(255, Double(pixels[offset + 1]) * factor),
-        blue: min(255, Double(pixels[offset + 2]) * factor)
+        blue: min(255, Double(pixels[offset]) * factor)
       )
     }
     return (samples, dominantEdgeBackground(samples, width: dimension, height: dimension))

@@ -1279,22 +1279,27 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   Widget _liveReplacementImage(Uint8List bytes, double size) => SizedBox(
     width: size,
     height: size,
-    child: ClipRect(
-      child: Transform.translate(
-        offset: Offset(_imageX * size * 3 / 512, -_imageY * size * 3 / 512),
-        child: Transform.scale(
-          scale: _imageScale,
-          child: Image.memory(
-            bytes,
-            width: size,
-            height: size,
-            fit: BoxFit.fill,
-            filterQuality: _imageSmoothing
-                ? FilterQuality.high
-                : FilterQuality.none,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Transform.translate(
+          offset: Offset(_imageX * size * 3 / 512, -_imageY * size * 3 / 512),
+          child: Transform.scale(
+            scale: _imageScale,
+            alignment: Alignment.center,
+            transformHitTests: false,
+            child: Image.memory(
+              bytes,
+              width: size,
+              height: size,
+              fit: BoxFit.fill,
+              filterQuality: _imageSmoothing
+                  ? FilterQuality.high
+                  : FilterQuality.none,
+            ),
           ),
         ),
-      ),
+      ],
     ),
   );
 

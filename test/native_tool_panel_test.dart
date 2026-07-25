@@ -40,6 +40,8 @@ void main() {
     expect(panel, contains("'replacements': _replacements.map"));
     expect(panel, contains('RenderRepaintBoundary'));
     expect(panel, contains('_liveReplacementImage'));
+    expect(panel, contains('clipBehavior: Clip.none'));
+    expect(panel, isNot(contains('child: ClipRect(')));
     expect(panel, contains('_selectSingleCharacter'));
     expect(panel, contains('_tryParseCustomColor'));
     expect(panel, contains('_SaturationValuePicker'));
@@ -80,6 +82,14 @@ void main() {
     expect(nativeEngine, contains('makeCOLR'));
     expect(nativeEngine, contains('makeCPAL'));
     expect(nativeEngine, contains('isGrayscaleImage'));
+    expect(
+      nativeEngine,
+      contains('red: min(255, Double(pixels[offset + 2]) * factor)'),
+    );
+    expect(
+      nativeEngine,
+      contains('blue: min(255, Double(pixels[offset]) * factor)'),
+    );
     expect(nativeEngine, contains('normalizeContourWinding'));
     expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
@@ -94,7 +104,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.18+19'));
+    expect(pubspec, contains('version: 1.0.19+20'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
