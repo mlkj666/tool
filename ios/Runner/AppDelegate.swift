@@ -1389,7 +1389,7 @@ private enum NativeColorFontProcessor {
         appendInt16(&bitmapData, 0)
         bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
         bitmapData.append(image)
-        offset += 12 + image.count
+        offset += 8 + image.count
       }
     }
     appendUInt32(&records, UInt32(offset))
