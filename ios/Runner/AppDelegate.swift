@@ -1162,9 +1162,6 @@ private enum NativeColorFontProcessor {
     tables.removeValue(forKey: "COLR")
     tables.removeValue(forKey: "CPAL")
     tables.removeValue(forKey: "sbix")
-    guard hasPalette else {
-      return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
-    }
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
