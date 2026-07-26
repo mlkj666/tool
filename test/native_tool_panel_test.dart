@@ -32,6 +32,7 @@ void main() {
   test('apply reloads processed font and export is separate', () {
     expect(panel, contains('Future<void> _applyAdjustments()'));
     expect(panel, contains('Future<void> _exportFont()'));
+    expect(panel, contains('await _applyAdjustments();'));
     expect(panel, contains("'processFont'"));
     expect(panel, contains("'saveFont'"));
   });
@@ -111,7 +112,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.23+24'));
+    expect(pubspec, contains('version: 1.0.24+25'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

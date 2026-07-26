@@ -399,6 +399,12 @@ class _NativeToolPanelState extends State<NativeToolPanel>
 
   Future<void> _exportFont() async {
     if (_fontBytes == null) return _message('请先导入字体');
+    if (_busy) return;
+    // Export always materializes the current image and slider state first.
+    // This prevents saving the previous glyf-only font when the user skips
+    // the separate Apply action.
+    await _applyAdjustments();
+    if (_fontBytes == null) return;
     try {
       await _channel.invokeMethod('saveFont', {
         'filename': _fontName.replaceFirst(
