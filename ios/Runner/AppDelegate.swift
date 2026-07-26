@@ -1152,23 +1152,22 @@ private enum NativeColorFontProcessor {
     let hasGlobal = params.globalColor != nil
     let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
     let hasReplacements = !params.replacements.isEmpty
+    // Image replacements are already written to glyf by the outline engine.
+    // Do not turn their raster color regions into several COLR layers: apps
+    // that only support ordinary TTF fonts otherwise paint those layers on
+    // top of one another as a solid black shape.
     guard hasPalette || hasReplacements else { return data }
     guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
     var tables = try NativeTTFProcessor.readTables(data)
     tables.removeValue(forKey: "COLR")
     tables.removeValue(forKey: "CPAL")
     tables.removeValue(forKey: "sbix")
+    guard hasPalette else {
+      return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+    }
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
-    var imageGlyphs = Set<Int>()
-    var imagesByGlyph: [Int: Data] = [:]
-    for (characters, imageData) in params.replacements {
-      for glyph in glyphIDs(for: characters, font: ctFont) {
-        imageGlyphs.insert(glyph)
-        imagesByGlyph[glyph] = imageData
-      }
-    }
     var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
     var paletteIndexes: [UInt32: Int] = [:]
     var layersByGlyph: [Int: [(glyph: Int, palette: Int)]] = [:]
@@ -1184,17 +1183,17 @@ private enum NativeColorFontProcessor {
     if hasPalette {
       var glyphColors: [Int: String] = [:]
       if let global = params.globalColor, hasGlobal {
-        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
+        for glyph in 1..<glyphCount {
           glyphColors[glyph] = global
         }
       }
       if !params.randomColors.isEmpty {
-        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
+        for glyph in 1..<glyphCount {
           glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count]
         }
       }
       for (characters, color) in params.characterColors {
-        for glyph in glyphIDs(for: characters, font: ctFont) where !imageGlyphs.contains(glyph) {
+        for glyph in glyphIDs(for: characters, font: ctFont) {
           glyphColors[glyph] = color
         }
       }
@@ -1203,19 +1202,6 @@ private enum NativeColorFontProcessor {
       }
     }
 
-    if !imagesByGlyph.isEmpty {
-      let imageLayers = try appendImageLayers(
-        to: &tables,
-        imagesByGlyph: imagesByGlyph,
-        params: params,
-        font: ctFont
-      )
-      for (baseGlyph, layers) in imageLayers where !layers.isEmpty {
-        layersByGlyph[baseGlyph] = layers.map { layer in
-          (layer.glyph, paletteIndex(for: layer.color))
-        }
-      }
-    }
     if !layersByGlyph.isEmpty && !palette.isEmpty {
       tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: makeCOLR(layersByGlyph))
       tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: makeCPAL(palette))
@@ -1704,7 +1690,12 @@ private enum RasterGlyphConverter {
     offsetY: Double
   ) -> [[OutlinePoint]] {
     let targetHeight = max(1.0, Double(targetBox.height))
-    let scale = max(0.05, userScale) * targetHeight / (0.8 * Double(max(1, sourceHeight)))
+    let targetWidth = max(1.0, Double(targetBox.width))
+    let heightScale = targetHeight / (0.8 * Double(max(1, sourceHeight)))
+    let widthScale = targetWidth / Double(max(1, sourceWidth))
+    // Fit the unscaled image inside both glyph dimensions. User scaling can
+    // still enlarge it intentionally, but the default value cannot crop it.
+    let scale = max(0.05, userScale) * min(heightScale, widthScale)
     let centerX = Double(targetBox.midX)
     let centerY = Double(targetBox.midY)
     let sourceCenterX = Double(sourceWidth) * 0.5

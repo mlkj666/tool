@@ -1640,7 +1640,15 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       ..._replacements.entries.map(
         (entry) => ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Image.memory(entry.value, width: 44, height: 44),
+          leading: SizedBox(
+            width: 44,
+            height: 44,
+            child: Image.memory(
+              entry.value,
+              fit: BoxFit.contain,
+              filterQuality: FilterQuality.high,
+            ),
+          ),
           title: Text('绑定字符：${entry.key}'),
           trailing: IconButton(
             icon: const Icon(Icons.delete_outline),

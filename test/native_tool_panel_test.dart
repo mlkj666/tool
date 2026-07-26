@@ -71,12 +71,17 @@ void main() {
     expect(nativeEngine, contains('rdpSimplify(contour'));
     expect(nativeEngine, contains('Double(max(width, height)) / 256.0'));
     expect(nativeEngine, contains('targetHeight / (0.8 *'));
+    expect(nativeEngine, contains('let widthScale = targetWidth /'));
+    expect(nativeEngine, contains('min(heightScale, widthScale)'));
     expect(nativeEngine, contains('let spacingScale = max(0.3, appliedScale)'));
     expect(nativeEngine, isNot(contains('VNDetectContoursRequest')));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
-    expect(nativeEngine, contains('appendImageLayers'));
-    expect(nativeEngine, contains('let imageLayers = try appendImageLayers'));
+    expect(
+      nativeEngine,
+      contains('top of one another as a solid black shape'),
+    );
+    expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
     expect(nativeEngine, contains('metrics.reserveCapacity'));
     expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
     expect(nativeEngine, contains('makeCOLR'));
@@ -95,7 +100,7 @@ void main() {
     expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
     expect(nativeEngine, isNot(contains('makeSBIX')));
-    expect(nativeEngine, contains('!imageGlyphs.contains(glyph)'));
+    expect(nativeEngine, contains('let hasReplacements = !params.replacements.isEmpty'));
     expect(panel, contains("'characterColors': _characterColors.map"));
     expect(panel, contains('_imageBytes = null'));
     expect(panel, contains("_message('还原失败：\$error')"));
@@ -104,7 +109,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.19+20'));
+    expect(pubspec, contains('version: 1.0.20+21'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
