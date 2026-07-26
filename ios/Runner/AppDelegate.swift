@@ -1168,6 +1168,14 @@ private enum NativeColorFontProcessor {
     guard let maxp = tables["maxp"] else { return data }
     let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
+    var imageGlyphs = Set<Int>()
+    var imagesByGlyph: [Int: Data] = [:]
+    for (characters, imageData) in params.replacements {
+      for glyph in glyphIDs(for: characters, font: ctFont) {
+        imageGlyphs.insert(glyph)
+        imagesByGlyph[glyph] = imageData
+      }
+    }
     var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
     var paletteIndexes: [UInt32: Int] = [:]
     var layersByGlyph: [Int: [(glyph: Int, palette: Int)]] = [:]
@@ -1183,17 +1191,17 @@ private enum NativeColorFontProcessor {
     if hasPalette {
       var glyphColors: [Int: String] = [:]
       if let global = params.globalColor, hasGlobal {
-        for glyph in 1..<glyphCount {
+        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
           glyphColors[glyph] = global
         }
       }
       if !params.randomColors.isEmpty {
-        for glyph in 1..<glyphCount {
+        for glyph in 1..<glyphCount where !imageGlyphs.contains(glyph) {
           glyphColors[glyph] = params.randomColors[(glyph - 1) % params.randomColors.count]
         }
       }
       for (characters, color) in params.characterColors {
-        for glyph in glyphIDs(for: characters, font: ctFont) {
+        for glyph in glyphIDs(for: characters, font: ctFont) where !imageGlyphs.contains(glyph) {
           glyphColors[glyph] = color
         }
       }
@@ -1205,6 +1213,13 @@ private enum NativeColorFontProcessor {
     if !layersByGlyph.isEmpty && !palette.isEmpty {
       tables["COLR"] = FontTable(tag: "COLR", checksum: 0, data: makeCOLR(layersByGlyph))
       tables["CPAL"] = FontTable(tag: "CPAL", checksum: 0, data: makeCPAL(palette))
+    }
+    if !imagesByGlyph.isEmpty {
+      tables["sbix"] = FontTable(
+        tag: "sbix",
+        checksum: 0,
+        data: makeSBIX(imagesByGlyph, glyphCount: glyphCount)
+      )
     }
     return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
   }
@@ -1348,6 +1363,42 @@ private enum NativeColorFontProcessor {
     for (red, green, blue, alpha) in palette {
       table.append(blue); table.append(green); table.append(red); table.append(alpha)
     }
+    return table
+  }
+
+  private static func makeSBIX(
+    _ imagesByGlyph: [Int: Data],
+    glyphCount: Int
+  ) -> Data {
+    let strikeOffset = 12
+    let strikeHeaderSize = 4
+    let offsetsSize = (glyphCount + 1) * 4
+    var table = Data()
+    appendUInt16(&table, 1)
+    appendUInt16(&table, 0)
+    appendUInt32(&table, 1)
+    appendUInt32(&table, UInt32(strikeOffset))
+
+    var strike = Data()
+    appendUInt16(&strike, 512)
+    appendUInt16(&strike, 72)
+    var records = Data()
+    var bitmapData = Data()
+    var offset = strikeHeaderSize + offsetsSize
+    for glyph in 0..<glyphCount {
+      appendUInt32(&records, UInt32(offset))
+      if let image = imagesByGlyph[glyph] {
+        appendInt16(&bitmapData, 0)
+        appendInt16(&bitmapData, 0)
+        bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
+        bitmapData.append(image)
+        offset += 12 + image.count
+      }
+    }
+    appendUInt32(&records, UInt32(offset))
+    strike.append(records)
+    strike.append(bitmapData)
+    table.append(strike)
     return table
   }
 

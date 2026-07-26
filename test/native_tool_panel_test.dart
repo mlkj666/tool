@@ -99,7 +99,8 @@ void main() {
     expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
     expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
-    expect(nativeEngine, isNot(contains('makeSBIX')));
+    expect(nativeEngine, contains('makeSBIX'));
+    expect(nativeEngine, contains('bitmapData.append(image)'));
     expect(nativeEngine, contains('let hasReplacements = !params.replacements.isEmpty'));
     expect(panel, contains("'characterColors': _characterColors.map"));
     expect(panel, contains('_imageBytes = null'));
@@ -109,7 +110,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.20+21'));
+    expect(pubspec, contains('version: 1.0.21+22'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
