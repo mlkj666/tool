@@ -1582,8 +1582,8 @@ private enum NativeColorFontProcessor {
     let originY = (canvasBottom + removedBottom * baseScale) * strikeScale
     return SBIXBitmap(
       data: png,
-      originX: Int16(clampInt16(Int(round(originX)))),
-      originY: Int16(clampInt16(Int(round(originY))))
+      originX: Int16(max(-32768, min(32767, Int(round(originX))))),
+      originY: Int16(max(-32768, min(32767, Int(round(originY)))))
     )
   }
 
