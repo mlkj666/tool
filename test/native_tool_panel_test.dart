@@ -41,6 +41,7 @@ void main() {
     expect(panel, contains("'replacements': _replacements.map"));
     expect(panel, contains('RenderRepaintBoundary'));
     expect(panel, contains('_liveReplacementImage'));
+    expect(panel, contains('_boundReplacementImage'));
     expect(panel, contains('clipBehavior: Clip.none'));
     expect(panel, isNot(contains('child: ClipRect(')));
     expect(panel, contains('_selectSingleCharacter'));
@@ -63,6 +64,7 @@ void main() {
     expect(nativeEngine, contains('finishImageRequest'));
     expect(nativeEngine, contains('cancelImageRequest'));
     expect(panel, contains('_bindImportedImage(notify: false)'));
+    expect(panel, contains('_renderReplacementWorkspace'));
     expect(panel, contains('_prepareImportedImage'));
     expect(panel, contains('_foregroundBounds'));
     expect(panel, contains('const canvasSide = 1536.0'));
@@ -114,10 +116,17 @@ void main() {
       contains('for tag in ["COLR", "CPAL", "sbix", "CBDT", "CBLC", "SVG "]'),
     );
     expect(nativeEngine, contains('makeSBIX'));
-    expect(nativeEngine, contains('let origin = bitmapOrigin(for: image)'));
+    expect(
+      nativeEngine,
+      contains('let strikeSizes = [512, 256, 128, 96, 64, 48, 32]'),
+    );
+    expect(nativeEngine, contains('let sbixFlags: UInt16 = 1'));
+    expect(nativeEngine, contains('makeSBIXBitmap(from: image, ppem: ppem)'));
+    expect(nativeEngine, contains('bitmapAlphaBounds'));
+    expect(nativeEngine, contains('monochromeFallbackMask'));
     expect(nativeEngine, contains('userScale: userScale * canvasScale'));
-    expect(nativeEngine, contains('bitmapData.append(image)'));
-    expect(nativeEngine, contains('offset += 8 + image.count'));
+    expect(nativeEngine, contains('bitmapData.append(bitmap.data)'));
+    expect(nativeEngine, contains('offset += 8 + bitmap.data.count'));
     expect(
       nativeEngine,
       contains('let hasReplacements = !params.replacements.isEmpty'),
@@ -130,7 +139,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.27+28'));
+    expect(pubspec, contains('version: 1.0.28+29'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

@@ -953,7 +953,32 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       if (notify) _message('请输入目标字符并导入图片');
       return false;
     }
-    final codec = await ui.instantiateImageCodec(_imageBytes!);
+    final workspace = await _renderReplacementWorkspace(
+      _imageBytes!,
+      scale: _imageScale,
+      x: _imageX,
+      y: _imageY,
+    );
+    if (workspace == null || !mounted) return false;
+    setState(() {
+      _showAppliedPreview = false;
+      _replacements[char] = workspace;
+      _characterAdjustments.putIfAbsent(
+        char,
+        () => {'size': 0, 'spacing': 0, 'x': 0, 'y': 0},
+      )['spacing'] = _imageSpacing;
+    });
+    if (notify) _message('图片已绑定到字符 $char');
+    return true;
+  }
+
+  Future<Uint8List?> _renderReplacementWorkspace(
+    Uint8List source, {
+    double scale = 1,
+    double x = 0,
+    double y = 0,
+  }) async {
+    final codec = await ui.instantiateImageCodec(source);
     final frame = await codec.getNextFrame();
     const referenceSide = 512.0;
     const canvasSide = 1536.0;
@@ -963,10 +988,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       ..filterQuality = _imageSmoothing
           ? FilterQuality.high
           : FilterQuality.none;
-    final drawSize = referenceSide * _imageScale.clamp(.2, 1.6);
+    final drawSize = referenceSide * scale.clamp(.2, 1.6);
     final rect = Rect.fromLTWH(
-      (canvasSide - drawSize) / 2 + _imageX * 3,
-      (canvasSide - drawSize) / 2 - _imageY * 3,
+      (canvasSide - drawSize) / 2 + x * 3,
+      (canvasSide - drawSize) / 2 - y * 3,
       drawSize,
       drawSize,
     );
@@ -983,17 +1008,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     );
     final rendered = await recorder.endRecording().toImage(1536, 1536);
     final bytes = await rendered.toByteData(format: ui.ImageByteFormat.png);
-    if (bytes == null || !mounted) return false;
-    setState(() {
-      _showAppliedPreview = false;
-      _replacements[char] = bytes.buffer.asUint8List();
-      _characterAdjustments.putIfAbsent(
-        char,
-        () => {'size': 0, 'spacing': 0, 'x': 0, 'y': 0},
-      )['spacing'] = _imageSpacing;
-    });
-    if (notify) _message('图片已绑定到字符 $char');
-    return true;
+    frame.image.dispose();
+    rendered.dispose();
+    return bytes?.buffer.asUint8List();
   }
 
   Future<void> _bindDrawing() async {
@@ -1013,10 +1030,14 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     }
     final image = await boundary.toImage(pixelRatio: 3);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
-    if (data == null || !mounted) return;
+    image.dispose();
+    if (data == null) return;
+    final prepared = await _prepareImportedImage(data.buffer.asUint8List());
+    final workspace = await _renderReplacementWorkspace(prepared);
+    if (workspace == null || !mounted) return;
     setState(() {
       _showAppliedPreview = false;
-      _replacements[char] = data.buffer.asUint8List();
+      _replacements[char] = workspace;
     });
     if (restoreGrid) setState(() => _drawGrid = true);
     _message('手绘已绑定到字符 $char');
@@ -1253,9 +1274,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
               !useAppliedFont &&
               _imageBytes != null &&
               char == _replacementCharacter();
-          final replacement = useAppliedFont
-              ? null
-              : (liveImage ? _imageBytes : _replacements[char]);
+          final replacement = liveImage ? _imageBytes : _replacements[char];
           final color =
               _characterColors[char] ??
               (_randomPalette.isNotEmpty
@@ -1270,7 +1289,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           final child = replacement != null
               ? liveImage
                     ? _liveReplacementImage(replacement, size)
-                    : Image.memory(replacement, width: size, height: size)
+                    : _boundReplacementImage(replacement, size)
               : Text(char, style: textStyle);
           final painter = TextPainter(
             text: TextSpan(text: char, style: textStyle),
@@ -1345,6 +1364,29 @@ class _NativeToolPanelState extends State<NativeToolPanel>
                   ? FilterQuality.high
                   : FilterQuality.none,
             ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _boundReplacementImage(Uint8List bytes, double size) => SizedBox(
+    width: size,
+    height: size,
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned(
+          left: -size,
+          top: -size,
+          width: size * 3,
+          height: size * 3,
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.fill,
+            filterQuality: _imageSmoothing
+                ? FilterQuality.high
+                : FilterQuality.none,
           ),
         ),
       ],
@@ -1719,11 +1761,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           leading: SizedBox(
             width: 44,
             height: 44,
-            child: Image.memory(
-              entry.value,
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.high,
-            ),
+            child: _boundReplacementImage(entry.value, 44),
           ),
           title: Text('绑定字符：${entry.key}'),
           trailing: IconButton(

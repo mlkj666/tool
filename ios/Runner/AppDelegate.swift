@@ -1128,7 +1128,7 @@ private enum NativeOutlineFontProcessor {
     return try NativeColorFontProcessor.apply(data: adjusted, params: params)
   }
 
-  private static func replacementGlyphBox(
+  static func replacementGlyphBox(
     glyph: Int,
     font: CTFont,
     unitsPerEm: Int
@@ -1317,7 +1317,6 @@ private enum NativeColorFontProcessor {
       let imageLayers = try appendImageLayers(
         to: &tables,
         imagesByGlyph: imagesByGlyph,
-        params: params,
         font: ctFont
       )
       for (baseGlyph, layers) in imageLayers {
@@ -1356,7 +1355,6 @@ private enum NativeColorFontProcessor {
   private static func appendImageLayers(
     to tables: inout [String: FontTable],
     imagesByGlyph: [Int: Data],
-    params: NativeFontAdjustParams,
     font: CTFont
   ) throws -> [Int: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))]] {
     guard var head = tables["head"]?.data,
@@ -1395,36 +1393,21 @@ private enum NativeColorFontProcessor {
     var maxSimplePoints = maxp.count >= 8 ? Int(readUInt16(maxp, 6)) : 0
     var maxSimpleContours = maxp.count >= 10 ? Int(readUInt16(maxp, 8)) : 0
     for (baseGlyph, imageData) in imagesByGlyph.sorted(by: { $0.key < $1.key }) {
-      let rasterLayers = try RasterGlyphConverter.colorLayers(from: imageData, unitsPerEm: upm)
-      guard !rasterLayers.isEmpty else { continue }
       let baseMetric = metrics[max(0, min(baseGlyph, originalCount - 1))]
-      var mutableGlyph = CGGlyph(baseGlyph)
-      var targetBox = CTFontGetBoundingRectsForGlyphs(font, .horizontal, &mutableGlyph, nil, 1)
-      if targetBox.isNull || targetBox.width <= 0 || targetBox.height <= 0 {
-        targetBox = CGRect(x: 0, y: -CGFloat(upm) * 0.2, width: CGFloat(upm), height: CGFloat(upm))
-      }
-      let allPoints = rasterLayers.flatMap { $0.contours.flatMap { $0 } }
-      let sourceMinX = allPoints.map(\.x).min() ?? 0
-      let sourceMaxX = allPoints.map(\.x).max() ?? max(1, rasterLayers[0].sourceWidth)
-      let sourceMinY = allPoints.map(\.y).min() ?? 0
-      let sourceMaxY = allPoints.map(\.y).max() ?? max(1, rasterLayers[0].sourceHeight)
-      let sourceWidth = max(1, sourceMaxX - sourceMinX)
-      let sourceHeight = max(1, sourceMaxY - sourceMinY)
+      let targetBox = NativeOutlineFontProcessor.replacementGlyphBox(
+        glyph: baseGlyph,
+        font: font,
+        unitsPerEm: upm
+      )
+      let rasterLayers = try RasterGlyphConverter.colorLayers(
+        from: imageData,
+        unitsPerEm: upm,
+        targetBox: targetBox
+      )
+      guard !rasterLayers.isEmpty else { continue }
       var mapped: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))] = []
       for layer in rasterLayers where glyphCount < 65535 {
-        let transformed = layer.contours.map { contour in
-          contour.map { point in
-            OutlinePoint(
-              x: max(-32768, min(32767, Int(round(
-                Double(targetBox.minX) + Double(point.x - sourceMinX) / Double(sourceWidth) * Double(targetBox.width)
-              )))),
-              y: max(-32768, min(32767, Int(round(
-                Double(targetBox.maxY) - Double(point.y - sourceMinY) / Double(sourceHeight) * Double(targetBox.height)
-              )))),
-              onCurve: point.onCurve
-            )
-          }
-        }
+        let transformed = layer.contours
         let encoded = CoreTextOutlineConverter.encodeGlyph(transformed)
         guard !encoded.data.isEmpty else { continue }
         let validContours = transformed.filter { $0.count >= 3 }
@@ -1514,45 +1497,130 @@ private enum NativeColorFontProcessor {
     _ imagesByGlyph: [Int: Data],
     glyphCount: Int
   ) -> Data {
-    let strikeOffset = 12
+    let strikeSizes = [512, 256, 128, 96, 64, 48, 32]
     let strikeHeaderSize = 4
     let offsetsSize = (glyphCount + 1) * 4
+    var strikes: [Data] = []
+    for ppem in strikeSizes {
+      var strike = Data()
+      appendUInt16(&strike, UInt16(ppem))
+      appendUInt16(&strike, 72)
+      var records = Data()
+      var bitmapData = Data()
+      var offset = strikeHeaderSize + offsetsSize
+      for glyph in 0..<glyphCount {
+        appendUInt32(&records, UInt32(offset))
+        if let image = imagesByGlyph[glyph],
+           let bitmap = makeSBIXBitmap(from: image, ppem: ppem) {
+          appendInt16(&bitmapData, bitmap.originX)
+          appendInt16(&bitmapData, bitmap.originY)
+          bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
+          bitmapData.append(bitmap.data)
+          offset += 8 + bitmap.data.count
+        }
+      }
+      appendUInt32(&records, UInt32(offset))
+      strike.append(records)
+      strike.append(bitmapData)
+      strikes.append(strike)
+    }
+
     var table = Data()
     appendUInt16(&table, 1)
-    appendUInt16(&table, 0)
-    appendUInt32(&table, 1)
-    appendUInt32(&table, UInt32(strikeOffset))
-
-    var strike = Data()
-    appendUInt16(&strike, 512)
-    appendUInt16(&strike, 72)
-    var records = Data()
-    var bitmapData = Data()
-    var offset = strikeHeaderSize + offsetsSize
-    for glyph in 0..<glyphCount {
-      appendUInt32(&records, UInt32(offset))
-      if let image = imagesByGlyph[glyph] {
-        let origin = bitmapOrigin(for: image)
-        appendInt16(&bitmapData, origin.x)
-        appendInt16(&bitmapData, origin.y)
-        bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
-        bitmapData.append(image)
-        offset += 8 + image.count
-      }
+    // Bit zero is required by the OpenType sbix specification. Keeping bit
+    // one clear prevents the monochrome outline from covering the bitmap.
+    let sbixFlags: UInt16 = 1
+    appendUInt16(&table, sbixFlags)
+    appendUInt32(&table, UInt32(strikes.count))
+    var strikeOffset = 8 + strikes.count * 4
+    for strike in strikes {
+      appendUInt32(&table, UInt32(strikeOffset))
+      strikeOffset += strike.count
     }
-    appendUInt32(&records, UInt32(offset))
-    strike.append(records)
-    strike.append(bitmapData)
-    table.append(strike)
+    for strike in strikes { table.append(strike) }
     return table
   }
 
-  private static func bitmapOrigin(for data: Data) -> (x: Int16, y: Int16) {
-    guard let image = UIImage(data: data)?.cgImage else { return (0, 0) }
-    guard image.width == 1536, image.height == 1536 else { return (0, 0) }
-    let x = max(-32768, min(32767, (512 - image.width) / 2))
-    let y = max(-32768, min(32767, (512 - image.height) / 2))
-    return (Int16(x), Int16(y))
+  private struct SBIXBitmap {
+    let data: Data
+    let originX: Int16
+    let originY: Int16
+  }
+
+  private static func makeSBIXBitmap(from data: Data, ppem: Int) -> SBIXBitmap? {
+    guard let image = UIImage(data: data)?.cgImage,
+          let bounds = bitmapAlphaBounds(image),
+          let cropped = image.cropping(to: bounds) else { return nil }
+    let workspace = image.width == 1536 && image.height == 1536
+    let baseScale = workspace
+      ? 1.0
+      : min(512.0 / Double(image.width), 512.0 / Double(image.height))
+    let canvasLeft = workspace
+      ? -512.0
+      : (512.0 - Double(image.width) * baseScale) * 0.5
+    let canvasBottom = workspace
+      ? -512.0
+      : (512.0 - Double(image.height) * baseScale) * 0.5
+    let strikeScale = Double(ppem) / 512.0
+    let totalScale = baseScale * strikeScale
+    let outputWidth = max(1, Int(round(Double(cropped.width) * totalScale)))
+    let outputHeight = max(1, Int(round(Double(cropped.height) * totalScale)))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let output = UIGraphicsImageRenderer(
+      size: CGSize(width: outputWidth, height: outputHeight),
+      format: format
+    ).image { _ in
+      UIImage(cgImage: cropped).draw(
+        in: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+      )
+    }
+    guard let png = output.pngData() else { return nil }
+    let originX = (canvasLeft + Double(bounds.minX) * baseScale) * strikeScale
+    let removedBottom = Double(image.height) - Double(bounds.maxY)
+    let originY = (canvasBottom + removedBottom * baseScale) * strikeScale
+    return SBIXBitmap(
+      data: png,
+      originX: Int16(clampInt16(Int(round(originX)))),
+      originY: Int16(clampInt16(Int(round(originY))))
+    )
+  }
+
+  private static func bitmapAlphaBounds(_ image: CGImage) -> CGRect? {
+    let width = image.width
+    let height = image.height
+    guard width > 0, height > 0 else { return nil }
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+      guard let context = CGContext(
+        data: buffer.baseAddress,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue |
+          CGBitmapInfo.byteOrder32Big.rawValue
+      ) else { return false }
+      context.translateBy(x: 0, y: CGFloat(height))
+      context.scaleBy(x: 1, y: -1)
+      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+    guard rendered else { return nil }
+    var minX = width, minY = height, maxX = -1, maxY = -1
+    for y in 0..<height {
+      for x in 0..<width where pixels[(y * width + x) * 4 + 3] >= 8 {
+        minX = min(minX, x); minY = min(minY, y)
+        maxX = max(maxX, x); maxY = max(maxY, y)
+      }
+    }
+    guard maxX >= minX, maxY >= minY else { return nil }
+    let padding = 1
+    minX = max(0, minX - padding); minY = max(0, minY - padding)
+    maxX = min(width - 1, maxX + padding); maxY = min(height - 1, maxY + padding)
+    return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -1642,7 +1710,11 @@ private enum RasterGlyphConverter {
         height: dimension
       )
     }
-    let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
+    let mask = cleanMask(
+      monochromeFallbackMask(samples),
+      width: dimension,
+      height: dimension
+    )
     let sourceContours = traceContours(mask, width: dimension, height: dimension)
     return mapContours(
       sourceContours,
@@ -1670,7 +1742,11 @@ private enum RasterGlyphConverter {
     if let background = raster.background {
       removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
-    let mask = cleanMask(samples.map { $0 != nil }, width: dimension, height: dimension)
+    let mask = cleanMask(
+      monochromeFallbackMask(samples),
+      width: dimension,
+      height: dimension
+    )
     return mapContours(
       traceContours(mask, width: dimension, height: dimension),
       sourceWidth: dimension,
@@ -1682,10 +1758,15 @@ private enum RasterGlyphConverter {
     )
   }
 
-  static func colorLayers(from data: Data, unitsPerEm: Int) throws -> [RasterColorLayer] {
+  static func colorLayers(
+    from data: Data,
+    unitsPerEm: Int,
+    targetBox: CGRect
+  ) throws -> [RasterColorLayer] {
+    let canvasScale = sourceCanvasScale(data)
     let dimension = rasterDimension(
       base: 192,
-      canvasScale: sourceCanvasScale(data)
+      canvasScale: canvasScale
     )
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
@@ -1760,6 +1841,16 @@ private enum RasterGlyphConverter {
       let layerContours = traceContours(mask, width: dimension, height: dimension)
       guard !layerContours.isEmpty else { continue }
       let center = centers[label]
+      let mappedContours = mapContours(
+        layerContours,
+        sourceWidth: dimension,
+        sourceHeight: dimension,
+        targetBox: targetBox,
+        userScale: canvasScale,
+        offsetX: 0,
+        offsetY: 0
+      )
+      guard !mappedContours.isEmpty else { continue }
       output.append(RasterColorLayer(
         color: (
           UInt8(max(0, min(255, center.red.rounded()))),
@@ -1767,12 +1858,31 @@ private enum RasterGlyphConverter {
           UInt8(max(0, min(255, center.blue.rounded()))),
           255
         ),
-        contours: layerContours,
+        contours: mappedContours,
         sourceWidth: dimension,
         sourceHeight: dimension
       ))
     }
     return output
+  }
+
+  private static func monochromeFallbackMask(
+    _ samples: [ColorSample?]
+  ) -> [Bool] {
+    let colors = samples.compactMap { $0 }
+    guard !colors.isEmpty else { return Array(repeating: false, count: samples.count) }
+    if isGrayscaleImage(samples, foregroundCount: colors.count) {
+      return samples.map { $0 != nil }
+    }
+    let luminance = colors.map {
+      $0.red * 0.2126 + $0.green * 0.7152 + $0.blue * 0.0722
+    }.sorted()
+    let percentile = luminance[min(luminance.count - 1, luminance.count / 3)]
+    let threshold = max(72.0, min(150.0, percentile))
+    return samples.map { sample in
+      guard let sample else { return false }
+      return sample.red * 0.2126 + sample.green * 0.7152 + sample.blue * 0.0722 <= threshold
+    }
   }
 
   private static func sourceCanvasScale(_ data: Data) -> Double {
