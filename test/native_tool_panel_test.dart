@@ -67,6 +67,8 @@ void main() {
     expect(panel, contains('_foregroundBounds'));
     expect(panel, contains('const canvasSide = 1536.0'));
     expect(panel, contains('toImage(1536, 1536)'));
+    expect(panel, contains('ValueListenableBuilder<TextEditingValue>'));
+    expect(panel, contains('alignment: WrapAlignment.start'));
     expect(panel, contains('Icons.remove_circle_outline'));
     expect(panel, contains('Icons.add_circle_outline'));
     expect(panel, contains('_accountLine'));
@@ -80,6 +82,12 @@ void main() {
     expect(nativeEngine, isNot(contains('VNDetectContoursRequest')));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
+    expect(nativeEngine, contains('prepareForAdjustment'));
+    expect(nativeEngine, contains('replacementGlyphBox'));
+    expect(nativeEngine, contains('tables["BSFT"]'));
+    expect(nativeEngine, contains('patched.maxPoints'));
+    expect(nativeEngine, contains('patched.maxContours'));
+    expect(nativeEngine, contains('metrics.count == glyphCount'));
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
     expect(nativeEngine, contains('metrics.reserveCapacity'));
     expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
@@ -122,7 +130,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.26+27'));
+    expect(pubspec, contains('version: 1.0.27+28'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

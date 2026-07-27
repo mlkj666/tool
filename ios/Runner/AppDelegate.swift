@@ -408,6 +408,12 @@ private final class NativeTTFProcessor {
         tables["glyf"]?.data = patched.glyf
         tables["loca"]?.data = patched.loca
         tables["head"]?.data = patched.head
+        var patchedMaxp = maxp.data
+        if patchedMaxp.count >= 10 {
+          writeUInt16(&patchedMaxp, 6, UInt16(min(65535, patched.maxPoints)))
+          writeUInt16(&patchedMaxp, 8, UInt16(min(65535, patched.maxContours)))
+          tables["maxp"]?.data = patchedMaxp
+        }
         averageBolden = patched.averageBolden
       }
     }
@@ -460,7 +466,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, averageBolden: Double)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, maxPoints: Int, maxContours: Int, averageBolden: Double)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -479,6 +485,8 @@ private final class NativeTTFProcessor {
     var newOffsets = [Int](repeating: 0, count: numGlyphs + 1)
     var current = 0
     var globalMinX = Int.max, globalMinY = Int.max, globalMaxX = Int.min, globalMaxY = Int.min
+    var maxSimplePoints = maxp.count >= 8 ? Int(readUInt16(maxp, 6)) : 0
+    var maxSimpleContours = maxp.count >= 10 ? Int(readUInt16(maxp, 8)) : 0
     var boldenTotal = 0.0
     var boldenCount = 0
     for i in 0..<numGlyphs {
@@ -513,6 +521,12 @@ private final class NativeTTFProcessor {
         globalMaxX = max(globalMaxX, Int(readInt16(chunk, 6)))
         globalMaxY = max(globalMaxY, Int(readInt16(chunk, 8)))
       }
+      let contourCount = chunk.count >= 10 ? Int(readInt16(chunk, 0)) : 0
+      if contourCount > 0, chunk.count >= 10 + contourCount * 2 {
+        let pointCount = Int(readUInt16(chunk, 10 + (contourCount - 1) * 2)) + 1
+        maxSimplePoints = max(maxSimplePoints, pointCount)
+        maxSimpleContours = max(maxSimpleContours, contourCount)
+      }
       chunks.append(chunk)
       current += chunk.count
       if current % 2 != 0 {
@@ -544,7 +558,14 @@ private final class NativeTTFProcessor {
       writeInt16(&newHead, 40, globalMaxX)
       writeInt16(&newHead, 42, globalMaxY)
     }
-    return (newGlyf, newLoca, newHead, boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0)
+    return (
+      newGlyf,
+      newLoca,
+      newHead,
+      maxSimplePoints,
+      maxSimpleContours,
+      boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0
+    )
   }
 
   private static func transformSimpleGlyph(_ chunk: Data, scale: Double, riseUnits: Int, xOffsetUnits: Int, weightPercent: Double, globalYMid: Double) -> (data: Data, boldenUnits: Double)? {
@@ -1052,11 +1073,14 @@ private final class NativeTTFProcessor {
 
 private enum NativeOutlineFontProcessor {
   static func adjust(data: Data, params: NativeFontAdjustParams) throws -> Data {
-    let tables = try NativeTTFProcessor.readTables(data)
+    let sourceData = try NativeColorFontProcessor.prepareForAdjustment(
+      data: data,
+      hasReplacements: !params.replacements.isEmpty
+    )
+    let tables = try NativeTTFProcessor.readTables(sourceData)
     if tables["glyf"] != nil,
        tables["loca"] != nil,
-       abs(params.weight) < 0.001,
-       let provider = CGDataProvider(data: data as CFData),
+       let provider = CGDataProvider(data: sourceData as CFData),
        let cgFont = CGFont(provider) {
       let unitsPerEm = max(1, Int(cgFont.unitsPerEm))
       let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(unitsPerEm), nil, nil)
@@ -1070,22 +1094,11 @@ private enum NativeOutlineFontProcessor {
       var replacementGlyphs: [Int: [[OutlinePoint]]] = [:]
       for (characters, imageData) in params.replacements {
         for glyph in glyphIDs(for: characters, font: ctFont) {
-          var mutableGlyph = CGGlyph(glyph)
-          var glyphBox = CTFontGetBoundingRectsForGlyphs(
-            ctFont,
-            .horizontal,
-            &mutableGlyph,
-            nil,
-            1
+          let glyphBox = replacementGlyphBox(
+            glyph: glyph,
+            font: ctFont,
+            unitsPerEm: unitsPerEm
           )
-          if glyphBox.isNull || glyphBox.width <= 0 || glyphBox.height <= 0 {
-            glyphBox = CGRect(
-              x: 0,
-              y: -CGFloat(unitsPerEm) * 0.2,
-              width: CGFloat(unitsPerEm),
-              height: CGFloat(unitsPerEm)
-            )
-          }
           let adjustment = glyphAdjustments[glyph]
           let userScale = max(0.05, 1.0 + params.size / 100.0) *
             max(0.05, 1.0 + (adjustment?.size ?? 0) / 100.0)
@@ -1102,7 +1115,7 @@ private enum NativeOutlineFontProcessor {
         }
       }
       let adjusted = try NativeTTFProcessor.adjust(
-        data: data,
+        data: sourceData,
         params: params,
         selectedGlyphs: selectedGlyphs,
         glyphAdjustments: glyphAdjustments,
@@ -1110,9 +1123,34 @@ private enum NativeOutlineFontProcessor {
       )
       return try NativeColorFontProcessor.apply(data: adjusted, params: params)
     }
-    let converted = try CoreTextOutlineConverter.convert(data: data, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments, replacements: params.replacements)
+    let converted = try CoreTextOutlineConverter.convert(data: sourceData, selectedCharacters: params.targetAll ? "" : params.chars, characterAdjustments: params.characterAdjustments, replacements: params.replacements)
     let adjusted = try NativeTTFProcessor.adjust(data: converted.data, params: params, selectedGlyphs: params.targetAll ? nil : converted.selectedGlyphs, glyphAdjustments: converted.glyphAdjustments)
     return try NativeColorFontProcessor.apply(data: adjusted, params: params)
+  }
+
+  private static func replacementGlyphBox(
+    glyph: Int,
+    font: CTFont,
+    unitsPerEm: Int
+  ) -> CGRect {
+    var mutableGlyph = CGGlyph(glyph)
+    var advance = CGSize.zero
+    _ = CTFontGetAdvancesForGlyphs(
+      font,
+      .horizontal,
+      &mutableGlyph,
+      &advance,
+      1
+    )
+    let side = CGFloat(max(1, unitsPerEm))
+    let centerX = advance.width * 0.5
+    let centerY = (CTFontGetAscent(font) - CTFontGetDescent(font)) * 0.5
+    return CGRect(
+      x: centerX - side * 0.5,
+      y: centerY - side * 0.5,
+      width: side,
+      height: side
+    )
   }
 
   private static func glyphIDs(for text: String, font: CTFont) -> Set<Int> {
@@ -1148,6 +1186,71 @@ private enum NativeOutlineFontProcessor {
 }
 
 private enum NativeColorFontProcessor {
+  static func prepareForAdjustment(
+    data: Data,
+    hasReplacements: Bool
+  ) throws -> Data {
+    guard hasReplacements else { return data }
+    var tables = try NativeTTFProcessor.readTables(data)
+    guard let marker = tables["BSFT"]?.data,
+          marker.count >= 4,
+          readUInt16(marker, 0) == 1 else { return data }
+    let baseGlyphCount = Int(readUInt16(marker, 2))
+    guard let maxpTable = tables["maxp"] else { throw NativeFontError.malformedFont }
+    let currentGlyphCount = Int(readUInt16(maxpTable.data, 4))
+
+    for tag in ["COLR", "CPAL", "sbix", "CBDT", "CBLC", "SVG ", "BSFT"] {
+      tables.removeValue(forKey: tag)
+    }
+    guard baseGlyphCount > 0, baseGlyphCount < currentGlyphCount else {
+      return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+    }
+    guard let head = tables["head"]?.data,
+          var hhea = tables["hhea"]?.data,
+          var maxp = tables["maxp"]?.data,
+          let hmtx = tables["hmtx"]?.data,
+          let loca = tables["loca"]?.data,
+          let glyf = tables["glyf"]?.data else {
+      throw NativeFontError.malformedFont
+    }
+    let longLoca = Int16(bitPattern: readUInt16(head, 50)) == 1
+    let locaEntrySize = longLoca ? 4 : 2
+    guard loca.count >= (baseGlyphCount + 1) * locaEntrySize else {
+      throw NativeFontError.malformedFont
+    }
+    let glyphEndOffset = baseGlyphCount * locaEntrySize
+    let glyphEnd = longLoca
+      ? Int(readUInt32(loca, glyphEndOffset))
+      : Int(readUInt16(loca, glyphEndOffset)) * 2
+    guard glyphEnd >= 0, glyphEnd <= glyf.count,
+          Int(readUInt16(hhea, 34)) == currentGlyphCount,
+          hmtx.count >= baseGlyphCount * 4 else {
+      throw NativeFontError.malformedFont
+    }
+
+    writeUInt16(&maxp, 4, UInt16(baseGlyphCount))
+    writeUInt16(&hhea, 34, UInt16(baseGlyphCount))
+    tables["head"] = FontTable(tag: "head", checksum: 0, data: head)
+    tables["hhea"] = FontTable(tag: "hhea", checksum: 0, data: hhea)
+    tables["maxp"] = FontTable(tag: "maxp", checksum: 0, data: maxp)
+    tables["hmtx"] = FontTable(
+      tag: "hmtx",
+      checksum: 0,
+      data: Data(hmtx.prefix(baseGlyphCount * 4))
+    )
+    tables["loca"] = FontTable(
+      tag: "loca",
+      checksum: 0,
+      data: Data(loca.prefix((baseGlyphCount + 1) * locaEntrySize))
+    )
+    tables["glyf"] = FontTable(
+      tag: "glyf",
+      checksum: 0,
+      data: Data(glyf.prefix(glyphEnd))
+    )
+    return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
+  }
+
   static func apply(data: Data, params: NativeFontAdjustParams) throws -> Data {
     let hasGlobal = params.globalColor != nil
     let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
@@ -1164,6 +1267,7 @@ private enum NativeColorFontProcessor {
     }
     guard let maxp = tables["maxp"] else { return data }
     var glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
+    let baseGlyphCount = glyphCount
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
     var imageGlyphs = Set<Int>()
     var imagesByGlyph: [Int: Data] = [:]
@@ -1240,6 +1344,12 @@ private enum NativeColorFontProcessor {
         data: makeSBIX(imagesByGlyph, glyphCount: glyphCount)
       )
     }
+    if hasReplacements {
+      var marker = Data()
+      appendUInt16(&marker, 1)
+      appendUInt16(&marker, UInt16(baseGlyphCount))
+      tables["BSFT"] = FontTable(tag: "BSFT", checksum: 0, data: marker)
+    }
     return NativeTTFProcessor.serializeTables(tables, sfntVersion: 0x00010000)
   }
 
@@ -1282,6 +1392,8 @@ private enum NativeColorFontProcessor {
     }
     var output: [Int: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))]] = [:]
     var glyphCount = originalCount
+    var maxSimplePoints = maxp.count >= 8 ? Int(readUInt16(maxp, 6)) : 0
+    var maxSimpleContours = maxp.count >= 10 ? Int(readUInt16(maxp, 8)) : 0
     for (baseGlyph, imageData) in imagesByGlyph.sorted(by: { $0.key < $1.key }) {
       let rasterLayers = try RasterGlyphConverter.colorLayers(from: imageData, unitsPerEm: upm)
       guard !rasterLayers.isEmpty else { continue }
@@ -1315,6 +1427,12 @@ private enum NativeColorFontProcessor {
         }
         let encoded = CoreTextOutlineConverter.encodeGlyph(transformed)
         guard !encoded.data.isEmpty else { continue }
+        let validContours = transformed.filter { $0.count >= 3 }
+        maxSimplePoints = max(
+          maxSimplePoints,
+          validContours.reduce(0) { $0 + $1.count }
+        )
+        maxSimpleContours = max(maxSimpleContours, validContours.count)
         if glyf.count % 2 != 0 { glyf.append(0) }
         glyf.append(encoded.data)
         if glyf.count % 2 != 0 { glyf.append(0) }
@@ -1326,6 +1444,9 @@ private enum NativeColorFontProcessor {
       if !mapped.isEmpty { output[baseGlyph] = mapped }
     }
     if glyphCount == originalCount { return output }
+    guard metrics.count == glyphCount, offsets.count == glyphCount + 1 else {
+      throw NativeFontError.malformedFont
+    }
     loca = Data()
     for offset in offsets { appendUInt32(&loca, UInt32(offset)) }
     hmtx = Data()
@@ -1335,6 +1456,10 @@ private enum NativeColorFontProcessor {
     }
     writeUInt16(&head, 50, 1)
     writeUInt16(&maxp, 4, UInt16(glyphCount))
+    if maxp.count >= 10 {
+      writeUInt16(&maxp, 6, UInt16(min(65535, maxSimplePoints)))
+      writeUInt16(&maxp, 8, UInt16(min(65535, maxSimpleContours)))
+    }
     writeUInt16(&hhea, 34, UInt16(glyphCount))
     tables["head"] = FontTable(tag: "head", checksum: 0, data: head)
     tables["hhea"] = FontTable(tag: "hhea", checksum: 0, data: hhea)

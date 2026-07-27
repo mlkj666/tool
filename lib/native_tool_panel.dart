@@ -1169,7 +1169,6 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           height: 44,
           child: TextField(
             controller: _textController,
-            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               isDense: true,
               hintText: '输入预览文字',
@@ -1179,9 +1178,18 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           ),
         ),
         const SizedBox(height: 8),
-        Expanded(child: _previewBand('当前效果', false)),
-        const Divider(height: 1),
-        Expanded(child: _previewBand('修改前', true)),
+        Expanded(
+          child: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: _textController,
+            builder: (context, value, child) => Column(
+              children: [
+                Expanded(child: _previewBand('当前效果', false)),
+                const Divider(height: 1),
+                Expanded(child: _previewBand('修改前', true)),
+              ],
+            ),
+          ),
+        ),
         Text(
           _fontName,
           maxLines: 1,
@@ -1206,18 +1214,22 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           ),
         ),
       ),
-      Center(
-        child: original
-            ? Text(
-                _textController.text.isEmpty ? '预览文字' : _textController.text,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontFamily: _originalFontFamily,
-                  fontSize: 27,
-                  color: const Color(0xFF6B7280),
-                ),
-              )
-            : _modifiedText(),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 16, right: 8),
+          child: original
+              ? Text(
+                  _textController.text.isEmpty ? '预览文字' : _textController.text,
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    fontFamily: _originalFontFamily,
+                    fontSize: 27,
+                    color: const Color(0xFF6B7280),
+                  ),
+                )
+              : _modifiedText(),
+        ),
       ),
     ],
   );
@@ -1226,75 +1238,78 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     final text = _textController.text.isEmpty ? '预览文字' : _textController.text;
     final useAppliedFont = _showAppliedPreview;
     final baseSize = (28 * (1 + _size / 100)).clamp(8, 72).toDouble();
-    return Wrap(
-      alignment: WrapAlignment.center,
-      runAlignment: WrapAlignment.center,
-      spacing: 0,
-      children: text.characters.map((char) {
-        final adjustment = _characterAdjustments[char] ?? const {};
-        final size = (baseSize * (1 + (adjustment['size'] ?? 0) / 100))
-            .clamp(6, 96)
-            .toDouble();
-        final liveImage =
-            !useAppliedFont &&
-            _imageBytes != null &&
-            char == _replacementCharacter();
-        final replacement = useAppliedFont
-            ? null
-            : (liveImage ? _imageBytes : _replacements[char]);
-        final color =
-            _characterColors[char] ??
-            (_randomPalette.isNotEmpty
-                ? _randomPalette[char.codeUnitAt(0) % _randomPalette.length]
-                : _globalColor);
-        final textStyle = TextStyle(
-          fontFamily: _fontFamily,
-          fontSize: size,
-          color: color,
-          fontWeight: _previewWeight(),
-        );
-        final child = replacement != null
-            ? liveImage
-                  ? _liveReplacementImage(replacement, size)
-                  : Image.memory(replacement, width: size, height: size)
-            : Text(char, style: textStyle);
-        final painter = TextPainter(
-          text: TextSpan(text: char, style: textStyle),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-        )..layout();
-        final naturalWidth = replacement != null ? size : painter.width;
-        final naturalHeight = replacement != null ? size : painter.height;
-        final characterSpacing = liveImage
-            ? _imageSpacing
-            : (adjustment['spacing'] ?? 0);
-        final layoutWidth = max(
-          1.0,
-          naturalWidth + _spacing * .25 + characterSpacing * .2,
-        );
-        return Transform.translate(
-          offset: Offset(
-            (adjustment['x'] ?? 0) * .25,
-            -(_rise + (adjustment['y'] ?? 0)) * .25,
-          ),
-          child: SizedBox(
-            width: layoutWidth,
-            height: naturalHeight,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned(
-                  left: 0,
-                  top: 0,
-                  width: naturalWidth,
-                  height: naturalHeight,
-                  child: child,
-                ),
-              ],
+    return SizedBox(
+      width: double.infinity,
+      child: Wrap(
+        alignment: WrapAlignment.start,
+        runAlignment: WrapAlignment.center,
+        spacing: 0,
+        children: text.characters.map((char) {
+          final adjustment = _characterAdjustments[char] ?? const {};
+          final size = (baseSize * (1 + (adjustment['size'] ?? 0) / 100))
+              .clamp(6, 96)
+              .toDouble();
+          final liveImage =
+              !useAppliedFont &&
+              _imageBytes != null &&
+              char == _replacementCharacter();
+          final replacement = useAppliedFont
+              ? null
+              : (liveImage ? _imageBytes : _replacements[char]);
+          final color =
+              _characterColors[char] ??
+              (_randomPalette.isNotEmpty
+                  ? _randomPalette[char.codeUnitAt(0) % _randomPalette.length]
+                  : _globalColor);
+          final textStyle = TextStyle(
+            fontFamily: _fontFamily,
+            fontSize: size,
+            color: color,
+            fontWeight: _previewWeight(),
+          );
+          final child = replacement != null
+              ? liveImage
+                    ? _liveReplacementImage(replacement, size)
+                    : Image.memory(replacement, width: size, height: size)
+              : Text(char, style: textStyle);
+          final painter = TextPainter(
+            text: TextSpan(text: char, style: textStyle),
+            textDirection: TextDirection.ltr,
+            maxLines: 1,
+          )..layout();
+          final naturalWidth = replacement != null ? size : painter.width;
+          final naturalHeight = replacement != null ? size : painter.height;
+          final characterSpacing = liveImage
+              ? _imageSpacing
+              : (adjustment['spacing'] ?? 0);
+          final layoutWidth = max(
+            1.0,
+            naturalWidth + _spacing * .25 + characterSpacing * .2,
+          );
+          return Transform.translate(
+            offset: Offset(
+              (adjustment['x'] ?? 0) * .25,
+              -(_rise + (adjustment['y'] ?? 0)) * .25,
             ),
-          ),
-        );
-      }).toList(),
+            child: SizedBox(
+              width: layoutWidth,
+              height: naturalHeight,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    width: naturalWidth,
+                    height: naturalHeight,
+                    child: child,
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
