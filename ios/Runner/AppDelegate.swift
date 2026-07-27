@@ -1407,8 +1407,9 @@ private enum NativeColorFontProcessor {
     for glyph in 0..<glyphCount {
       appendUInt32(&records, UInt32(offset))
       if let image = imagesByGlyph[glyph] {
-        appendInt16(&bitmapData, 0)
-        appendInt16(&bitmapData, 0)
+        let origin = bitmapOrigin(for: image)
+        appendInt16(&bitmapData, origin.x)
+        appendInt16(&bitmapData, origin.y)
         bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
         bitmapData.append(image)
         offset += 8 + image.count
@@ -1419,6 +1420,14 @@ private enum NativeColorFontProcessor {
     strike.append(bitmapData)
     table.append(strike)
     return table
+  }
+
+  private static func bitmapOrigin(for data: Data) -> (x: Int16, y: Int16) {
+    guard let image = UIImage(data: data)?.cgImage else { return (0, 0) }
+    guard image.width == 1536, image.height == 1536 else { return (0, 0) }
+    let x = max(-32768, min(32767, (512 - image.width) / 2))
+    let y = max(-32768, min(32767, (512 - image.height) / 2))
+    return (Int16(x), Int16(y))
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -1496,7 +1505,8 @@ private enum RasterGlyphConverter {
   }
 
   static func contours(from data: Data, unitsPerEm: Int) throws -> [[OutlinePoint]] {
-    let dimension = 256
+    let canvasScale = sourceCanvasScale(data)
+    let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
     if let background = raster.background {
@@ -1514,7 +1524,7 @@ private enum RasterGlyphConverter {
       sourceWidth: dimension,
       sourceHeight: dimension,
       targetBox: CGRect(x: 0, y: 0, width: CGFloat(unitsPerEm), height: CGFloat(unitsPerEm)),
-      userScale: 1,
+      userScale: canvasScale,
       offsetX: 0,
       offsetY: 0
     )
@@ -1528,7 +1538,8 @@ private enum RasterGlyphConverter {
     offsetX: Double,
     offsetY: Double
   ) throws -> [[OutlinePoint]] {
-    let dimension = 256
+    let canvasScale = sourceCanvasScale(data)
+    let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
     if let background = raster.background {
@@ -1540,14 +1551,17 @@ private enum RasterGlyphConverter {
       sourceWidth: dimension,
       sourceHeight: dimension,
       targetBox: glyphBox,
-      userScale: userScale,
+      userScale: userScale * canvasScale,
       offsetX: offsetX,
       offsetY: offsetY
     )
   }
 
   static func colorLayers(from data: Data, unitsPerEm: Int) throws -> [RasterColorLayer] {
-    let dimension = 192
+    let dimension = rasterDimension(
+      base: 192,
+      canvasScale: sourceCanvasScale(data)
+    )
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
     if let background = raster.background {
@@ -1634,6 +1648,15 @@ private enum RasterGlyphConverter {
       ))
     }
     return output
+  }
+
+  private static func sourceCanvasScale(_ data: Data) -> Double {
+    guard let image = UIImage(data: data)?.cgImage else { return 1 }
+    return image.width == 1536 && image.height == 1536 ? 3 : 1
+  }
+
+  private static func rasterDimension(base: Int, canvasScale: Double) -> Int {
+    max(base, min(768, Int(round(Double(base) * canvasScale))))
   }
 
   private static func cleanMask(_ input: [Bool], width: Int, height: Int) -> [Bool] {

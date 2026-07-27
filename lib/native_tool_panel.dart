@@ -955,17 +955,18 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     }
     final codec = await ui.instantiateImageCodec(_imageBytes!);
     final frame = await codec.getNextFrame();
-    const side = 512.0;
+    const referenceSide = 512.0;
+    const canvasSide = 1536.0;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final paint = Paint()
       ..filterQuality = _imageSmoothing
           ? FilterQuality.high
           : FilterQuality.none;
-    final drawSize = side * _imageScale.clamp(.2, 1.6);
+    final drawSize = referenceSide * _imageScale.clamp(.2, 1.6);
     final rect = Rect.fromLTWH(
-      (side - drawSize) / 2 + _imageX * 3,
-      (side - drawSize) / 2 - _imageY * 3,
+      (canvasSide - drawSize) / 2 + _imageX * 3,
+      (canvasSide - drawSize) / 2 - _imageY * 3,
       drawSize,
       drawSize,
     );
@@ -980,7 +981,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       rect,
       paint,
     );
-    final rendered = await recorder.endRecording().toImage(512, 512);
+    final rendered = await recorder.endRecording().toImage(1536, 1536);
     final bytes = await rendered.toByteData(format: ui.ImageByteFormat.png);
     if (bytes == null || !mounted) return false;
     setState(() {
