@@ -62,6 +62,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   double _imageX = 0;
   double _imageY = 0;
   bool _imageSmoothing = true;
+  bool _showAppliedPreview = false;
   final _singleCharController = TextEditingController();
   final _replacementCharController = TextEditingController();
   final _drawBoundaryKey = GlobalKey();
@@ -202,6 +203,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         _fontName = result['name']?.toString() ?? '字体文件';
         _fontFamily = family;
         _originalFontFamily = family;
+        _showAppliedPreview = false;
       });
     } catch (error) {
       _message('字体导入失败：$error');
@@ -222,7 +224,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       if (encoded.isEmpty || !mounted) return;
       final prepared = await _prepareImportedImage(base64Decode(encoded));
       if (!mounted) return;
-      setState(() => _imageBytes = prepared);
+      setState(() {
+        _imageBytes = prepared;
+        _showAppliedPreview = false;
+      });
     } catch (error) {
       _message('图片导入失败：$error');
     } finally {
@@ -336,13 +341,17 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     );
   }
 
-  Future<void> _applyAdjustments() async {
+  Future<bool> _applyAdjustments() async {
     if (_fontBytes == null) {
       _message('请先导入字体');
-      return;
+      return false;
     }
     if (_imageBytes != null && _replacementCharacter() != null) {
-      await _bindImportedImage(notify: false);
+      final bound = await _bindImportedImage(notify: false);
+      if (!bound) {
+        _message('图片绑定失败，未导出旧字体');
+        return false;
+      }
     }
     setState(() => _busy = true);
     try {
@@ -381,17 +390,20 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           ),
         );
       await loader.load();
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _fontBytes = processed;
         _fontFamily = family;
+        _showAppliedPreview = true;
         _size = _weight = _spacing = _rise = _line = 0;
         _characterAdjustments.clear();
         _singleSize = _singleSpacing = _singleX = _singleY = 0;
       });
       _message('调整已应用，当前预览就是导出效果');
+      return true;
     } catch (error) {
       _message('处理失败：$error');
+      return false;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -403,8 +415,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     // Export always materializes the current image and slider state first.
     // This prevents saving the previous glyf-only font when the user skips
     // the separate Apply action.
-    await _applyAdjustments();
-    if (_fontBytes == null) return;
+    final applied = await _applyAdjustments();
+    if (!applied || _fontBytes == null) return;
     try {
       await _channel.invokeMethod('saveFont', {
         'filename': _fontName.replaceFirst(
@@ -639,6 +651,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       _fontName = name;
       _fontFamily = family;
       _originalFontFamily = family;
+      _showAppliedPreview = false;
     });
   }
 
@@ -670,6 +683,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       setState(() {
         _fontBytes = Uint8List.fromList(bytes);
         _fontFamily = family;
+        _showAppliedPreview = false;
         _size = _weight = _spacing = _rise = _line = 0;
         _characterAdjustments.clear();
         _characterColors.clear();
@@ -890,6 +904,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
 
   void _setGlobalColor(Color color) {
     setState(() {
+      _showAppliedPreview = false;
       _globalColor = color;
       _globalColorEnabled = true;
       _randomPalette.clear();
@@ -906,6 +921,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     );
     values[key] = value;
     setState(() {
+      _showAppliedPreview = false;
       if (key == 'size') _singleSize = value;
       if (key == 'spacing') _singleSpacing = value;
       if (key == 'x') _singleX = value;
@@ -931,11 +947,11 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     return chars.isEmpty ? null : chars.first;
   }
 
-  Future<void> _bindImportedImage({bool notify = true}) async {
+  Future<bool> _bindImportedImage({bool notify = true}) async {
     final char = _replacementCharacter();
     if (char == null || _imageBytes == null) {
       if (notify) _message('请输入目标字符并导入图片');
-      return;
+      return false;
     }
     final codec = await ui.instantiateImageCodec(_imageBytes!);
     final frame = await codec.getNextFrame();
@@ -966,8 +982,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     );
     final rendered = await recorder.endRecording().toImage(512, 512);
     final bytes = await rendered.toByteData(format: ui.ImageByteFormat.png);
-    if (bytes == null || !mounted) return;
+    if (bytes == null || !mounted) return false;
     setState(() {
+      _showAppliedPreview = false;
       _replacements[char] = bytes.buffer.asUint8List();
       _characterAdjustments.putIfAbsent(
         char,
@@ -975,6 +992,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       )['spacing'] = _imageSpacing;
     });
     if (notify) _message('图片已绑定到字符 $char');
+    return true;
   }
 
   Future<void> _bindDrawing() async {
@@ -995,7 +1013,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     final image = await boundary.toImage(pixelRatio: 3);
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     if (data == null || !mounted) return;
-    setState(() => _replacements[char] = data.buffer.asUint8List());
+    setState(() {
+      _showAppliedPreview = false;
+      _replacements[char] = data.buffer.asUint8List();
+    });
     if (restoreGrid) setState(() => _drawGrid = true);
     _message('手绘已绑定到字符 $char');
   }
@@ -1202,6 +1223,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
 
   Widget _modifiedText() {
     final text = _textController.text.isEmpty ? '预览文字' : _textController.text;
+    final useAppliedFont = _showAppliedPreview;
     final baseSize = (28 * (1 + _size / 100)).clamp(8, 72).toDouble();
     return Wrap(
       alignment: WrapAlignment.center,
@@ -1213,8 +1235,12 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             .clamp(6, 96)
             .toDouble();
         final liveImage =
-            _imageBytes != null && char == _replacementCharacter();
-        final replacement = liveImage ? _imageBytes : _replacements[char];
+            !useAppliedFont &&
+            _imageBytes != null &&
+            char == _replacementCharacter();
+        final replacement = useAppliedFont
+            ? null
+            : (liveImage ? _imageBytes : _replacements[char]);
         final color =
             _characterColors[char] ??
             (_randomPalette.isNotEmpty
@@ -1394,6 +1420,13 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     }
 
     final divisions = ((max - min) / step).round().clamp(1, 10000).toInt();
+    void changed(double next) {
+      if (_showAppliedPreview && mounted) {
+        setState(() => _showAppliedPreview = false);
+      }
+      onChanged(next);
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -1401,7 +1434,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           SizedBox(width: 62, child: Text(label)),
           IconButton(
             onPressed: value > min
-                ? () => onChanged(stepped(value - step))
+                ? () => changed(stepped(value - step))
                 : null,
             tooltip: '减少 $label',
             padding: EdgeInsets.zero,
@@ -1416,12 +1449,12 @@ class _NativeToolPanelState extends State<NativeToolPanel>
               min: min,
               max: max,
               divisions: divisions,
-              onChanged: onChanged,
+              onChanged: changed,
             ),
           ),
           IconButton(
             onPressed: value < max
-                ? () => onChanged(stepped(value + step))
+                ? () => changed(stepped(value + step))
                 : null,
             tooltip: '增加 $label',
             padding: EdgeInsets.zero,
@@ -1584,6 +1617,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   void _applyCharacterColor() {
     if (_colorCharsController.text.isEmpty) return;
     setState(() {
+      _showAppliedPreview = false;
       for (final char in _colorCharsController.text.characters) {
         _characterColors[char] = _selectedColor;
       }
@@ -1619,7 +1653,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       _slider(
         '大小',
         _imageScale,
-        (value) => setState(() => _imageScale = value),
+        (value) => setState(() {
+          _showAppliedPreview = false;
+          _imageScale = value;
+        }),
         min: .3,
         max: 1.5,
         step: .05,
@@ -1628,10 +1665,27 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       _slider(
         '字距',
         _imageSpacing,
-        (value) => setState(() => _imageSpacing = value),
+        (value) => setState(() {
+          _showAppliedPreview = false;
+          _imageSpacing = value;
+        }),
       ),
-      _slider('左右', _imageX, (value) => setState(() => _imageX = value)),
-      _slider('上下', _imageY, (value) => setState(() => _imageY = value)),
+      _slider(
+        '左右',
+        _imageX,
+        (value) => setState(() {
+          _showAppliedPreview = false;
+          _imageX = value;
+        }),
+      ),
+      _slider(
+        '上下',
+        _imageY,
+        (value) => setState(() {
+          _showAppliedPreview = false;
+          _imageY = value;
+        }),
+      ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('平滑轮廓'),
@@ -1769,22 +1823,16 @@ class _NativeToolPanelState extends State<NativeToolPanel>
 }
 
 class _SaturationValuePicker extends StatelessWidget {
-  const _SaturationValuePicker({
-    required this.color,
-    required this.onChanged,
-  });
+  const _SaturationValuePicker({required this.color, required this.onChanged});
 
   final HSVColor color;
   final ValueChanged<HSVColor> onChanged;
 
   void _update(Offset position, Size size) {
     if (size.width <= 0 || size.height <= 0) return;
-    final saturation =
-        (position.dx / size.width).clamp(0.0, 1.0).toDouble();
+    final saturation = (position.dx / size.width).clamp(0.0, 1.0).toDouble();
     final value = (1 - position.dy / size.height).clamp(0.0, 1.0).toDouble();
-    onChanged(
-      color.withSaturation(saturation).withValue(value),
-    );
+    onChanged(color.withSaturation(saturation).withValue(value));
   }
 
   @override

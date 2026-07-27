@@ -1152,18 +1152,18 @@ private enum NativeColorFontProcessor {
     let hasGlobal = params.globalColor != nil
     let hasPalette = hasGlobal || !params.characterColors.isEmpty || !params.randomColors.isEmpty
     let hasReplacements = !params.replacements.isEmpty
-    // Image replacements are already written to glyf by the outline engine.
-    // Do not turn their raster color regions into several COLR layers: apps
-    // that only support ordinary TTF fonts otherwise paint those layers on
-    // top of one another as a solid black shape.
+    // The outline engine has already written a monochrome glyf fallback.
+    // This stage adds color-font tables for renderers that support them.
     guard hasPalette || hasReplacements else { return data }
     guard let provider = CGDataProvider(data: data as CFData), let cgFont = CGFont(provider) else { return data }
     var tables = try NativeTTFProcessor.readTables(data)
-    tables.removeValue(forKey: "COLR")
-    tables.removeValue(forKey: "CPAL")
-    tables.removeValue(forKey: "sbix")
+    // Rebuild every color-font representation from the current replacement
+    // images so stale tables from the source font cannot override the result.
+    for tag in ["COLR", "CPAL", "sbix", "CBDT", "CBLC", "SVG "] {
+      tables.removeValue(forKey: tag)
+    }
     guard let maxp = tables["maxp"] else { return data }
-    let glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
+    var glyphCount = max(1, Int(readUInt16(maxp.data, 4)))
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
     var imageGlyphs = Set<Int>()
     var imagesByGlyph: [Int: Data] = [:]
@@ -1204,6 +1204,28 @@ private enum NativeColorFontProcessor {
       }
       for (glyph, value) in glyphColors {
         layersByGlyph[glyph] = [(glyph, paletteIndex(for: parseColor(value)))]
+      }
+    }
+
+    // Keep the original glyf as the monochrome fallback, and add one outline
+    // glyph per retained raster color for COLR/CPAL-capable renderers.
+    if !imagesByGlyph.isEmpty {
+      let imageLayers = try appendImageLayers(
+        to: &tables,
+        imagesByGlyph: imagesByGlyph,
+        params: params,
+        font: ctFont
+      )
+      for (baseGlyph, layers) in imageLayers {
+        let mapped = layers.map { layer in
+          (glyph: layer.glyph, palette: paletteIndex(for: layer.color))
+        }
+        if !mapped.isEmpty {
+          layersByGlyph[baseGlyph] = mapped
+        }
+      }
+      if let finalMaxp = tables["maxp"]?.data {
+        glyphCount = max(1, Int(readUInt16(finalMaxp, 4)))
       }
     }
 

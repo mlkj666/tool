@@ -30,7 +30,7 @@ void main() {
   });
 
   test('apply reloads processed font and export is separate', () {
-    expect(panel, contains('Future<void> _applyAdjustments()'));
+    expect(panel, contains('Future<bool> _applyAdjustments()'));
     expect(panel, contains('Future<void> _exportFont()'));
     expect(panel, contains('await _applyAdjustments();'));
     expect(panel, contains("'processFont'"));
@@ -78,15 +78,13 @@ void main() {
     expect(nativeEngine, isNot(contains('VNDetectContoursRequest')));
     expect(nativeEngine, contains('replacementContours'));
     expect(nativeEngine, contains('NativeColorFontProcessor'));
-    expect(
-      nativeEngine,
-      contains('top of one another as a solid black shape'),
-    );
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
     expect(nativeEngine, contains('metrics.reserveCapacity'));
     expect(nativeEngine, contains('RasterGlyphConverter.colorLayers'));
     expect(nativeEngine, contains('makeCOLR'));
     expect(nativeEngine, contains('makeCPAL'));
+    expect(nativeEngine, contains('let imageLayers = try appendImageLayers'));
+    expect(nativeEngine, contains('glyphCount = max(1, Int(readUInt16(finalMaxp, 4)))'));
     expect(nativeEngine, contains('isGrayscaleImage'));
     expect(
       nativeEngine,
@@ -98,8 +96,10 @@ void main() {
     );
     expect(nativeEngine, contains('normalizeContourWinding'));
     expect(nativeEngine, contains('replacementGlyphs: replacementGlyphs'));
-    expect(nativeEngine, contains('tables.removeValue(forKey: "COLR")'));
-    expect(nativeEngine, contains('tables.removeValue(forKey: "sbix")'));
+    expect(
+      nativeEngine,
+      contains('for tag in ["COLR", "CPAL", "sbix", "CBDT", "CBLC", "SVG "]'),
+    );
     expect(nativeEngine, contains('makeSBIX'));
     expect(nativeEngine, contains('bitmapData.append(image)'));
     expect(nativeEngine, contains('offset += 8 + image.count'));
@@ -112,7 +112,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.24+25'));
+    expect(pubspec, contains('version: 1.0.25+26'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
