@@ -67,6 +67,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   final _replacementCharController = TextEditingController();
   final _drawBoundaryKey = GlobalKey();
   final Map<String, Uint8List> _replacements = {};
+  final Map<String, Uint8List> _replacementSources = {};
+  final Map<String, Map<String, double>> _replacementImageSettings = {};
+  final Map<String, Map<String, double>> _replacementTransforms = {};
   final Map<String, Map<String, double>> _characterAdjustments = {};
   double _singleSize = 0;
   double _singleSpacing = 0;
@@ -226,6 +229,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       if (!mounted) return;
       setState(() {
         _imageBytes = prepared;
+        _imageScale = 1;
+        _imageSpacing = _imageX = _imageY = 0;
         _showAppliedPreview = false;
       });
     } catch (error) {
@@ -353,6 +358,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         return false;
       }
     }
+    final nextReplacementTransforms = _nextReplacementTransforms();
     setState(() => _busy = true);
     try {
       final response = await _channel
@@ -369,6 +375,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             'replacements': _replacements.map(
               (key, value) => MapEntry(key, base64Encode(value)),
             ),
+            'replacementTransforms': nextReplacementTransforms,
             'globalColor': _globalColorEnabled ? _hex(_globalColor) : null,
             'characterColors': _characterColors.map(
               (key, value) => MapEntry(key, _hex(value)),
@@ -395,6 +402,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         _fontBytes = processed;
         _fontFamily = family;
         _showAppliedPreview = true;
+        _replacementTransforms
+          ..clear()
+          ..addAll(nextReplacementTransforms);
         _size = _weight = _spacing = _rise = _line = 0;
         _characterAdjustments.clear();
         _singleSize = _singleSpacing = _singleX = _singleY = 0;
@@ -432,7 +442,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
 
   Future<void> _exportConfig() async {
     final config = {
-      'version': 2,
+      'version': 3,
       'fontName': _fontName,
       'fontBase64': _fontBytes == null ? null : base64Encode(_fontBytes!),
       'previewText': _textController.text,
@@ -453,12 +463,29 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       'replacements': _replacements.map(
         (key, value) => MapEntry(key, base64Encode(value)),
       ),
+      'replacementSources': _replacementSources.map(
+        (key, value) => MapEntry(key, base64Encode(value)),
+      ),
+      'replacementImageSettings': _replacementImageSettings,
+      'replacementTransforms': _replacementTransforms,
     };
     await _channel.invokeMethod('saveFont', {
       'filename': 'font-config.json',
       'base64': base64Encode(utf8.encode(jsonEncode(config))),
     });
   }
+
+  Map<String, Map<String, double>> _doubleMap(Map source) => source.map(
+    (key, value) => MapEntry(
+      key.toString(),
+      Map<String, double>.from(
+        (value as Map).map(
+          (setting, number) =>
+              MapEntry(setting.toString(), (number as num).toDouble()),
+        ),
+      ),
+    ),
+  );
 
   Future<void> _importConfig() async {
     final result = await _channel.invokeMethod<Map<Object?, Object?>>(
@@ -509,6 +536,22 @@ class _NativeToolPanelState extends State<NativeToolPanel>
                   MapEntry(key.toString(), base64Decode(value.toString())),
             ),
           );
+        _replacementSources
+          ..clear()
+          ..addAll(
+            (config['replacementSources'] as Map? ?? {}).map(
+              (key, value) =>
+                  MapEntry(key.toString(), base64Decode(value.toString())),
+            ),
+          );
+        _replacementImageSettings
+          ..clear()
+          ..addAll(
+            _doubleMap(config['replacementImageSettings'] as Map? ?? {}),
+          );
+        _replacementTransforms
+          ..clear()
+          ..addAll(_doubleMap(config['replacementTransforms'] as Map? ?? {}));
         _characterColors
           ..clear()
           ..addAll(
@@ -689,6 +732,9 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         _characterColors.clear();
         _randomPalette.clear();
         _replacements.clear();
+        _replacementSources.clear();
+        _replacementImageSettings.clear();
+        _replacementTransforms.clear();
         _imageBytes = null;
         _replacementCharController.clear();
         _singleCharController.clear();
@@ -947,6 +993,29 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     return chars.isEmpty ? null : chars.first;
   }
 
+  Map<String, double> _replacementTransform(String char) =>
+      _replacementTransforms[char] ?? const {'scale': 1, 'x': 0, 'y': 0};
+
+  Map<String, Map<String, double>> _nextReplacementTransforms() {
+    final selectedCharacters = _targetCharsController.text.characters;
+    return _replacements.map((char, _) {
+      final previous = _replacementTransform(char);
+      final adjustment = _characterAdjustments[char] ?? const {};
+      final globallySelected = _targetAll || selectedCharacters.contains(char);
+      final globalScale = globallySelected ? max(0.01, 1 + _size / 100) : 1.0;
+      final characterScale = max(0.01, 1 + (adjustment['size'] ?? 0) / 100);
+      final appliedScale = globalScale * characterScale;
+      return MapEntry(char, {
+        'scale': (previous['scale'] ?? 1) * appliedScale,
+        'x': (previous['x'] ?? 0) * appliedScale + (adjustment['x'] ?? 0),
+        'y':
+            (previous['y'] ?? 0) * appliedScale +
+            (globallySelected ? _rise : 0) +
+            (adjustment['y'] ?? 0),
+      });
+    });
+  }
+
   Future<bool> _bindImportedImage({bool notify = true}) async {
     final char = _replacementCharacter();
     if (char == null || _imageBytes == null) {
@@ -963,6 +1032,17 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     setState(() {
       _showAppliedPreview = false;
       _replacements[char] = workspace;
+      _replacementSources[char] = Uint8List.fromList(_imageBytes!);
+      _replacementImageSettings[char] = {
+        'scale': _imageScale,
+        'spacing': _imageSpacing,
+        'x': _imageX,
+        'y': _imageY,
+      };
+      _replacementTransforms.putIfAbsent(
+        char,
+        () => {'scale': 1, 'x': 0, 'y': 0},
+      );
       _characterAdjustments.putIfAbsent(
         char,
         () => {'size': 0, 'spacing': 0, 'x': 0, 'y': 0},
@@ -970,6 +1050,49 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     });
     if (notify) _message('图片已绑定到字符 $char');
     return true;
+  }
+
+  Future<void> _editReplacement(String char) async {
+    var source = _replacementSources[char];
+    if (source == null) {
+      final workspace = _replacements[char];
+      if (workspace == null) return;
+      source = await _prepareImportedImage(workspace);
+      _replacementSources[char] = source;
+      _replacementImageSettings[char] = {
+        'scale': 1,
+        'spacing': 0,
+        'x': 0,
+        'y': 0,
+      };
+    }
+    if (!mounted) return;
+    final settings = _replacementImageSettings[char] ?? const {};
+    setState(() {
+      _replacementCharController.text = char;
+      _imageBytes = Uint8List.fromList(source!);
+      _imageScale = settings['scale'] ?? 1;
+      _imageSpacing = settings['spacing'] ?? 0;
+      _imageX = settings['x'] ?? 0;
+      _imageY = settings['y'] ?? 0;
+      _showAppliedPreview = false;
+    });
+    _message('已载入字符 $char，可继续调整');
+  }
+
+  void _deleteReplacement(String char) {
+    setState(() {
+      _replacements.remove(char);
+      _replacementSources.remove(char);
+      _replacementImageSettings.remove(char);
+      _replacementTransforms.remove(char);
+      if (_replacementCharacter() == char) {
+        _replacementCharController.clear();
+        _imageBytes = null;
+        _imageScale = 1;
+        _imageSpacing = _imageX = _imageY = 0;
+      }
+    });
   }
 
   Future<Uint8List?> _renderReplacementWorkspace(
@@ -988,7 +1111,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       ..filterQuality = _imageSmoothing
           ? FilterQuality.high
           : FilterQuality.none;
-    final drawSize = referenceSide * scale.clamp(.2, 1.6);
+    final drawSize = referenceSide * scale.clamp(.05, 1.5);
     final rect = Rect.fromLTWH(
       (canvasSide - drawSize) / 2 + x * 3,
       (canvasSide - drawSize) / 2 - y * 3,
@@ -1038,6 +1161,17 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     setState(() {
       _showAppliedPreview = false;
       _replacements[char] = workspace;
+      _replacementSources[char] = Uint8List.fromList(prepared);
+      _replacementImageSettings[char] = {
+        'scale': 1,
+        'spacing': 0,
+        'x': 0,
+        'y': 0,
+      };
+      _replacementTransforms.putIfAbsent(
+        char,
+        () => {'scale': 1, 'x': 0, 'y': 0},
+      );
     });
     if (restoreGrid) setState(() => _drawGrid = true);
     _message('手绘已绑定到字符 $char');
@@ -1258,7 +1392,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   Widget _modifiedText() {
     final text = _textController.text.isEmpty ? '预览文字' : _textController.text;
     final useAppliedFont = _showAppliedPreview;
-    final baseSize = (28 * (1 + _size / 100)).clamp(8, 72).toDouble();
+    final baseSize = (28 * (1 + _size / 100)).clamp(1.5, 120).toDouble();
     return SizedBox(
       width: double.infinity,
       child: Wrap(
@@ -1268,13 +1402,19 @@ class _NativeToolPanelState extends State<NativeToolPanel>
         children: text.characters.map((char) {
           final adjustment = _characterAdjustments[char] ?? const {};
           final size = (baseSize * (1 + (adjustment['size'] ?? 0) / 100))
-              .clamp(6, 96)
+              .clamp(.75, 240)
               .toDouble();
           final liveImage =
               !useAppliedFont &&
               _imageBytes != null &&
               char == _replacementCharacter();
           final replacement = liveImage ? _imageBytes : _replacements[char];
+          final appliedTransform = _replacementTransform(char);
+          final replacementSize = replacement == null
+              ? size
+              : (size * (appliedTransform['scale'] ?? 1))
+                    .clamp(.5, 360)
+                    .toDouble();
           final color =
               _characterColors[char] ??
               (_randomPalette.isNotEmpty
@@ -1288,16 +1428,20 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           );
           final child = replacement != null
               ? liveImage
-                    ? _liveReplacementImage(replacement, size)
-                    : _boundReplacementImage(replacement, size)
+                    ? _liveReplacementImage(replacement, replacementSize)
+                    : _boundReplacementImage(replacement, replacementSize)
               : Text(char, style: textStyle);
           final painter = TextPainter(
             text: TextSpan(text: char, style: textStyle),
             textDirection: TextDirection.ltr,
             maxLines: 1,
           )..layout();
-          final naturalWidth = replacement != null ? size : painter.width;
-          final naturalHeight = replacement != null ? size : painter.height;
+          final naturalWidth = replacement != null
+              ? replacementSize
+              : painter.width;
+          final naturalHeight = replacement != null
+              ? replacementSize
+              : painter.height;
           final characterSpacing = liveImage
               ? _imageSpacing
               : (adjustment['spacing'] ?? 0);
@@ -1307,8 +1451,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           );
           return Transform.translate(
             offset: Offset(
-              (adjustment['x'] ?? 0) * .25,
-              -(_rise + (adjustment['y'] ?? 0)) * .25,
+              (adjustment['x'] ?? 0) * .25 +
+                  (appliedTransform['x'] ?? 0) * size / 100,
+              -((_rise + (adjustment['y'] ?? 0)) * .25 +
+                  (appliedTransform['y'] ?? 0) * size / 100),
             ),
             child: SizedBox(
               width: layoutWidth,
@@ -1398,10 +1544,22 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
     children: [
       _sectionTitle('全局排版'),
-      _slider('大小', _size, (v) => setState(() => _size = v)),
+      _slider(
+        '大小',
+        _size,
+        (v) => setState(() => _size = v),
+        min: -95,
+        max: 200,
+      ),
       _slider('粗细', _weight, (v) => setState(() => _weight = v)),
       _slider('字距', _spacing, (v) => setState(() => _spacing = v)),
-      _slider('上下', _rise, (v) => setState(() => _rise = v)),
+      _slider(
+        '上下',
+        _rise,
+        (v) => setState(() => _rise = v),
+        min: -100,
+        max: 100,
+      ),
       _slider('行距', _line, (v) => setState(() => _line = v)),
       const SizedBox(height: 8),
       SegmentedButton<bool>(
@@ -1436,10 +1594,28 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           border: OutlineInputBorder(),
         ),
       ),
-      _slider('单字大小', _singleSize, (v) => _updateSingle('size', v)),
+      _slider(
+        '单字大小',
+        _singleSize,
+        (v) => _updateSingle('size', v),
+        min: -95,
+        max: 200,
+      ),
       _slider('单字字距', _singleSpacing, (v) => _updateSingle('spacing', v)),
-      _slider('单字左右', _singleX, (v) => _updateSingle('x', v)),
-      _slider('单字上下', _singleY, (v) => _updateSingle('y', v)),
+      _slider(
+        '单字左右',
+        _singleX,
+        (v) => _updateSingle('x', v),
+        min: -100,
+        max: 100,
+      ),
+      _slider(
+        '单字上下',
+        _singleY,
+        (v) => _updateSingle('y', v),
+        min: -100,
+        max: 100,
+      ),
       const SizedBox(height: 12),
       Row(
         children: [
@@ -1715,7 +1891,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           _showAppliedPreview = false;
           _imageScale = value;
         }),
-        min: .3,
+        min: .05,
         max: 1.5,
         step: .05,
         valueLabel: (value) => '${(value * 100).round()}%',
@@ -1735,6 +1911,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           _showAppliedPreview = false;
           _imageX = value;
         }),
+        min: -120,
+        max: 120,
       ),
       _slider(
         '上下',
@@ -1743,6 +1921,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           _showAppliedPreview = false;
           _imageY = value;
         }),
+        min: -120,
+        max: 120,
       ),
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
@@ -1764,9 +1944,20 @@ class _NativeToolPanelState extends State<NativeToolPanel>
             child: _boundReplacementImage(entry.value, 44),
           ),
           title: Text('绑定字符：${entry.key}'),
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => setState(() => _replacements.remove(entry.key)),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: '继续调整',
+                icon: const Icon(Icons.tune),
+                onPressed: () => _editReplacement(entry.key),
+              ),
+              IconButton(
+                tooltip: '删除绑定',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => _deleteReplacement(entry.key),
+              ),
+            ],
           ),
         ),
       ),

@@ -250,6 +250,14 @@ import UniformTypeIdentifiers
       let replacements = (args["replacements"] as? [String: String])?.reduce(into: [String: Data]()) { result, entry in
         if let data = Data(base64Encoded: entry.value) { result[entry.key] = data }
       } ?? [:]
+      let replacementTransforms = (args["replacementTransforms"] as? [String: Any])?.reduce(into: [String: NativeReplacementTransform]()) { result, entry in
+        guard let values = entry.value as? [String: Any] else { return }
+        result[entry.key] = NativeReplacementTransform(
+          scale: max(0.001, (values["scale"] as? NSNumber)?.doubleValue ?? 1),
+          x: (values["x"] as? NSNumber)?.doubleValue ?? 0,
+          y: (values["y"] as? NSNumber)?.doubleValue ?? 0
+        )
+      } ?? [:]
       let characterColors = args["characterColors"] as? [String: String] ?? [:]
       let randomColors = args["randomColors"] as? [String] ?? []
       let params = NativeFontAdjustParams(
@@ -262,6 +270,7 @@ import UniformTypeIdentifiers
         chars: args["chars"] as? String ?? "",
         characterAdjustments: characterAdjustments,
         replacements: replacements,
+        replacementTransforms: replacementTransforms,
         globalColor: args["globalColor"] as? String,
         characterColors: characterColors,
         randomColors: randomColors
@@ -345,6 +354,14 @@ private struct NativeGlyphAdjustment {
   let y: Double
 }
 
+private struct NativeReplacementTransform {
+  let scale: Double
+  let x: Double
+  let y: Double
+
+  static let identity = NativeReplacementTransform(scale: 1, x: 0, y: 0)
+}
+
 private struct NativeFontAdjustParams {
   let size: Double
   let weight: Double
@@ -355,6 +372,7 @@ private struct NativeFontAdjustParams {
   let chars: String
   let characterAdjustments: [String: NativeGlyphAdjustment]
   let replacements: [String: Data]
+  let replacementTransforms: [String: NativeReplacementTransform]
   let globalColor: String?
   let characterColors: [String: String]
   let randomColors: [String]
@@ -401,6 +419,8 @@ private final class NativeTTFProcessor {
     let globalYMid = hhea.map { Double(Int(readInt16($0, 4)) + Int(readInt16($0, 6))) * 0.5 } ?? 0
 
     var averageBolden = 0.0
+    var adjustedMinY: Int?
+    var adjustedMaxY: Int?
     let hasIndividualTransforms = glyphAdjustments.values.contains { abs($0.size) > 0.001 || abs($0.x) > 0.001 || abs($0.y) > 0.001 }
     if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 || hasIndividualTransforms || !replacementGlyphs.isEmpty {
       let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, replacementGlyphs: replacementGlyphs, upm: upm)
@@ -415,6 +435,22 @@ private final class NativeTTFProcessor {
           tables["maxp"]?.data = patchedMaxp
         }
         averageBolden = patched.averageBolden
+        adjustedMinY = patched.minY
+        adjustedMaxY = patched.maxY
+        if var patchedHhea = tables["hhea"]?.data,
+           patchedHhea.count >= 8 {
+          writeInt16(
+            &patchedHhea,
+            4,
+            max(Int(readInt16(patchedHhea, 4)), patched.maxY)
+          )
+          writeInt16(
+            &patchedHhea,
+            6,
+            min(Int(readInt16(patchedHhea, 6)), patched.minY)
+          )
+          tables["hhea"]?.data = patchedHhea
+        }
       }
     }
 
@@ -436,6 +472,22 @@ private final class NativeTTFProcessor {
 
     if let os2 = tables["OS/2"] {
       var patched = os2.data
+      if let minY = adjustedMinY,
+         let maxY = adjustedMaxY,
+         patched.count >= 78 {
+        writeInt16(&patched, 68, max(Int(readInt16(patched, 68)), maxY))
+        writeInt16(&patched, 70, min(Int(readInt16(patched, 70)), minY))
+        writeUInt16(
+          &patched,
+          74,
+          UInt16(min(65535, max(Int(readUInt16(patched, 74)), maxY)))
+        )
+        writeUInt16(
+          &patched,
+          76,
+          UInt16(min(65535, max(Int(readUInt16(patched, 76)), -minY)))
+        )
+      }
       if abs(params.weight) > 0.01 {
         patched = patchWeightClass(patched, weightPercent: params.weight)
       }
@@ -466,7 +518,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, maxPoints: Int, maxContours: Int, averageBolden: Double)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, maxPoints: Int, maxContours: Int, averageBolden: Double, minY: Int, maxY: Int)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -564,7 +616,9 @@ private final class NativeTTFProcessor {
       newHead,
       maxSimplePoints,
       maxSimpleContours,
-      boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0
+      boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0,
+      globalMinY == Int.max ? 0 : globalMinY,
+      globalMaxY == Int.min ? 0 : globalMaxY
     )
   }
 
@@ -785,7 +839,7 @@ private final class NativeTTFProcessor {
       let selected = selectedGlyphs == nil || selectedGlyphs!.contains(i)
       let adjustment = glyphAdjustments[i]
       let characterSpacingUnits = Int(round((adjustment?.spacing ?? 0) / 100.0 * Double(upm)))
-      if !selected && adjustment == nil { continue }
+      if !selected && adjustment == nil && replacementGlyphs[i] == nil { continue }
       let p = i * 4
       let oldWidth = Int(readUInt16(out, p))
       let appliedScale = (selected ? scale : 1.0) * max(0.01, 1.0 + (adjustment?.size ?? 0) / 100.0)
@@ -794,9 +848,11 @@ private final class NativeTTFProcessor {
         let minX = points.map(\.x).min() ?? 0
         let maxX = points.map(\.x).max() ?? minX
         let inkWidth = max(1, maxX - minX)
-        let spacingScale = max(0.3, appliedScale)
+        let spacingScale = max(0.01, appliedScale)
         let unscaledInk = Double(inkWidth) / max(0.05, appliedScale)
-        let advance = Int(round(spacingScale * max(Double(oldWidth), unscaledInk))) +
+        let scaledAdvance = spacingScale * max(Double(oldWidth), unscaledInk)
+        let visibleAdvance = Double(maxX - min(0, minX))
+        let advance = Int(round(max(scaledAdvance, visibleAdvance))) +
           (selected ? spacingUnits : 0) + characterSpacingUnits
         writeUInt16(&out, p, UInt16(max(1, min(65535, advance))))
         writeInt16(&out, p + 2, minX)
@@ -1093,17 +1149,16 @@ private enum NativeOutlineFontProcessor {
       }
       var replacementGlyphs: [Int: [[OutlinePoint]]] = [:]
       for (characters, imageData) in params.replacements {
+        let transform = params.replacementTransforms[characters] ?? .identity
         for glyph in glyphIDs(for: characters, font: ctFont) {
           let glyphBox = replacementGlyphBox(
             glyph: glyph,
             font: ctFont,
             unitsPerEm: unitsPerEm
           )
-          let adjustment = glyphAdjustments[glyph]
-          let userScale = max(0.05, 1.0 + params.size / 100.0) *
-            max(0.05, 1.0 + (adjustment?.size ?? 0) / 100.0)
-          let xUnits = (adjustment?.x ?? 0) / 100.0 * Double(unitsPerEm)
-          let yUnits = (params.rise + (adjustment?.y ?? 0)) / 100.0 * Double(unitsPerEm)
+          let userScale = transform.scale
+          let xUnits = transform.x / 100.0 * Double(unitsPerEm)
+          let yUnits = transform.y / 100.0 * Double(unitsPerEm)
           replacementGlyphs[glyph] = try RasterGlyphConverter.contours(
             from: imageData,
             unitsPerEm: unitsPerEm,
@@ -1144,10 +1199,9 @@ private enum NativeOutlineFontProcessor {
     )
     let side = CGFloat(max(1, unitsPerEm))
     let centerX = advance.width * 0.5
-    let centerY = (CTFontGetAscent(font) - CTFontGetDescent(font)) * 0.5
     return CGRect(
       x: centerX - side * 0.5,
-      y: centerY - side * 0.5,
+      y: 0,
       width: side,
       height: side
     )
@@ -1271,10 +1325,13 @@ private enum NativeColorFontProcessor {
     let ctFont = CTFontCreateWithGraphicsFont(cgFont, CGFloat(max(1, cgFont.unitsPerEm)), nil, nil)
     var imageGlyphs = Set<Int>()
     var imagesByGlyph: [Int: Data] = [:]
+    var transformsByGlyph: [Int: NativeReplacementTransform] = [:]
     for (characters, imageData) in params.replacements {
+      let transform = params.replacementTransforms[characters] ?? .identity
       for glyph in glyphIDs(for: characters, font: ctFont) {
         imageGlyphs.insert(glyph)
         imagesByGlyph[glyph] = imageData
+        transformsByGlyph[glyph] = transform
       }
     }
     var palette: [(UInt8, UInt8, UInt8, UInt8)] = []
@@ -1317,6 +1374,7 @@ private enum NativeColorFontProcessor {
       let imageLayers = try appendImageLayers(
         to: &tables,
         imagesByGlyph: imagesByGlyph,
+        transformsByGlyph: transformsByGlyph,
         font: ctFont
       )
       for (baseGlyph, layers) in imageLayers {
@@ -1340,7 +1398,13 @@ private enum NativeColorFontProcessor {
       tables["sbix"] = FontTable(
         tag: "sbix",
         checksum: 0,
-        data: makeSBIX(imagesByGlyph, glyphCount: glyphCount)
+        data: makeSBIX(
+          imagesByGlyph,
+          transformsByGlyph: transformsByGlyph,
+          glyphCount: glyphCount,
+          font: ctFont,
+          unitsPerEm: max(1, Int(cgFont.unitsPerEm))
+        )
       )
     }
     if hasReplacements {
@@ -1355,6 +1419,7 @@ private enum NativeColorFontProcessor {
   private static func appendImageLayers(
     to tables: inout [String: FontTable],
     imagesByGlyph: [Int: Data],
+    transformsByGlyph: [Int: NativeReplacementTransform],
     font: CTFont
   ) throws -> [Int: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))]] {
     guard var head = tables["head"]?.data,
@@ -1402,7 +1467,8 @@ private enum NativeColorFontProcessor {
       let rasterLayers = try RasterGlyphConverter.colorLayers(
         from: imageData,
         unitsPerEm: upm,
-        targetBox: targetBox
+        targetBox: targetBox,
+        transform: transformsByGlyph[baseGlyph] ?? .identity
       )
       guard !rasterLayers.isEmpty else { continue }
       var mapped: [(glyph: Int, color: (UInt8, UInt8, UInt8, UInt8))] = []
@@ -1495,7 +1561,10 @@ private enum NativeColorFontProcessor {
 
   private static func makeSBIX(
     _ imagesByGlyph: [Int: Data],
-    glyphCount: Int
+    transformsByGlyph: [Int: NativeReplacementTransform],
+    glyphCount: Int,
+    font: CTFont,
+    unitsPerEm: Int
   ) -> Data {
     let strikeSizes = [512, 256, 128, 96, 64, 48, 32]
     let strikeHeaderSize = 4
@@ -1510,13 +1579,26 @@ private enum NativeColorFontProcessor {
       var offset = strikeHeaderSize + offsetsSize
       for glyph in 0..<glyphCount {
         appendUInt32(&records, UInt32(offset))
-        if let image = imagesByGlyph[glyph],
-           let bitmap = makeSBIXBitmap(from: image, ppem: ppem) {
-          appendInt16(&bitmapData, bitmap.originX)
-          appendInt16(&bitmapData, bitmap.originY)
-          bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
-          bitmapData.append(bitmap.data)
-          offset += 8 + bitmap.data.count
+        if let image = imagesByGlyph[glyph] {
+          let glyphBox = NativeOutlineFontProcessor.replacementGlyphBox(
+            glyph: glyph,
+            font: font,
+            unitsPerEm: unitsPerEm
+          )
+          let bitmap = makeSBIXBitmap(
+            from: image,
+            ppem: ppem,
+            transform: transformsByGlyph[glyph] ?? .identity,
+            centerX: Double(glyphBox.midX) / Double(unitsPerEm) * 512,
+            centerY: Double(glyphBox.midY) / Double(unitsPerEm) * 512
+          )
+          if let bitmap {
+            appendInt16(&bitmapData, bitmap.originX)
+            appendInt16(&bitmapData, bitmap.originY)
+            bitmapData.append(contentsOf: [0x70, 0x6e, 0x67, 0x20])
+            bitmapData.append(bitmap.data)
+            offset += 8 + bitmap.data.count
+          }
         }
       }
       appendUInt32(&records, UInt32(offset))
@@ -1547,7 +1629,13 @@ private enum NativeColorFontProcessor {
     let originY: Int16
   }
 
-  private static func makeSBIXBitmap(from data: Data, ppem: Int) -> SBIXBitmap? {
+  private static func makeSBIXBitmap(
+    from data: Data,
+    ppem: Int,
+    transform: NativeReplacementTransform,
+    centerX: Double,
+    centerY: Double
+  ) -> SBIXBitmap? {
     guard let image = UIImage(data: data)?.cgImage,
           let bounds = bitmapAlphaBounds(image),
           let cropped = image.cropping(to: bounds) else { return nil }
@@ -1562,7 +1650,8 @@ private enum NativeColorFontProcessor {
       ? -512.0
       : (512.0 - Double(image.height) * baseScale) * 0.5
     let strikeScale = Double(ppem) / 512.0
-    let totalScale = baseScale * strikeScale
+    let visualScale = max(0.001, transform.scale)
+    let totalScale = baseScale * strikeScale * visualScale
     let outputWidth = max(1, Int(round(Double(cropped.width) * totalScale)))
     let outputHeight = max(1, Int(round(Double(cropped.height) * totalScale)))
     let format = UIGraphicsImageRendererFormat()
@@ -1577,9 +1666,15 @@ private enum NativeColorFontProcessor {
       )
     }
     guard let png = output.pngData() else { return nil }
-    let originX = (canvasLeft + Double(bounds.minX) * baseScale) * strikeScale
+    let baseOriginX = canvasLeft + Double(bounds.minX) * baseScale
     let removedBottom = Double(image.height) - Double(bounds.maxY)
-    let originY = (canvasBottom + removedBottom * baseScale) * strikeScale
+    let baseOriginY = canvasBottom + removedBottom * baseScale
+    let originX = (
+      centerX + (baseOriginX - centerX) * visualScale + transform.x / 100 * 512
+    ) * strikeScale
+    let originY = (
+      centerY + (baseOriginY - centerY) * visualScale + transform.y / 100 * 512
+    ) * strikeScale
     return SBIXBitmap(
       data: png,
       originX: Int16(max(-32768, min(32767, Int(round(originX))))),
@@ -1761,7 +1856,8 @@ private enum RasterGlyphConverter {
   static func colorLayers(
     from data: Data,
     unitsPerEm: Int,
-    targetBox: CGRect
+    targetBox: CGRect,
+    transform: NativeReplacementTransform
   ) throws -> [RasterColorLayer] {
     let canvasScale = sourceCanvasScale(data)
     let dimension = rasterDimension(
@@ -1846,9 +1942,9 @@ private enum RasterGlyphConverter {
         sourceWidth: dimension,
         sourceHeight: dimension,
         targetBox: targetBox,
-        userScale: canvasScale,
-        offsetX: 0,
-        offsetY: 0
+        userScale: canvasScale * transform.scale,
+        offsetX: transform.x / 100 * Double(unitsPerEm),
+        offsetY: transform.y / 100 * Double(unitsPerEm)
       )
       guard !mappedContours.isEmpty else { continue }
       output.append(RasterColorLayer(
@@ -2023,7 +2119,7 @@ private enum RasterGlyphConverter {
     let widthScale = targetWidth / Double(max(1, sourceWidth))
     // Fit the unscaled image inside both glyph dimensions. User scaling can
     // still enlarge it intentionally, but the default value cannot crop it.
-    let scale = max(0.05, userScale) * min(heightScale, widthScale)
+    let scale = max(0.001, userScale) * min(heightScale, widthScale)
     let centerX = Double(targetBox.midX)
     let centerY = Double(targetBox.midY)
     let sourceCenterX = Double(sourceWidth) * 0.5
