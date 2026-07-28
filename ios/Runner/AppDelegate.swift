@@ -419,8 +419,6 @@ private final class NativeTTFProcessor {
     let globalYMid = hhea.map { Double(Int(readInt16($0, 4)) + Int(readInt16($0, 6))) * 0.5 } ?? 0
 
     var averageBolden = 0.0
-    var adjustedMinY: Int?
-    var adjustedMaxY: Int?
     let hasIndividualTransforms = glyphAdjustments.values.contains { abs($0.size) > 0.001 || abs($0.x) > 0.001 || abs($0.y) > 0.001 }
     if abs(scale - 1.0) > 0.001 || riseUnits != 0 || abs(params.weight) > 0.001 || hasIndividualTransforms || !replacementGlyphs.isEmpty {
       let patched = patchGlyf(head: head.data, maxp: maxp.data, loca: loca.data, glyf: glyf.data, scale: scale, riseUnits: riseUnits, weightPercent: params.weight, globalYMid: globalYMid, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, replacementGlyphs: replacementGlyphs, upm: upm)
@@ -435,22 +433,6 @@ private final class NativeTTFProcessor {
           tables["maxp"]?.data = patchedMaxp
         }
         averageBolden = patched.averageBolden
-        adjustedMinY = patched.minY
-        adjustedMaxY = patched.maxY
-        if var patchedHhea = tables["hhea"]?.data,
-           patchedHhea.count >= 8 {
-          writeInt16(
-            &patchedHhea,
-            4,
-            max(Int(readInt16(patchedHhea, 4)), patched.maxY)
-          )
-          writeInt16(
-            &patchedHhea,
-            6,
-            min(Int(readInt16(patchedHhea, 6)), patched.minY)
-          )
-          tables["hhea"]?.data = patchedHhea
-        }
       }
     }
 
@@ -472,22 +454,6 @@ private final class NativeTTFProcessor {
 
     if let os2 = tables["OS/2"] {
       var patched = os2.data
-      if let minY = adjustedMinY,
-         let maxY = adjustedMaxY,
-         patched.count >= 78 {
-        writeInt16(&patched, 68, max(Int(readInt16(patched, 68)), maxY))
-        writeInt16(&patched, 70, min(Int(readInt16(patched, 70)), minY))
-        writeUInt16(
-          &patched,
-          74,
-          UInt16(min(65535, max(Int(readUInt16(patched, 74)), maxY)))
-        )
-        writeUInt16(
-          &patched,
-          76,
-          UInt16(min(65535, max(Int(readUInt16(patched, 76)), -minY)))
-        )
-      }
       if abs(params.weight) > 0.01 {
         patched = patchWeightClass(patched, weightPercent: params.weight)
       }
@@ -518,7 +484,7 @@ private final class NativeTTFProcessor {
     return tables
   }
 
-  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, maxPoints: Int, maxContours: Int, averageBolden: Double, minY: Int, maxY: Int)? {
+  private static func patchGlyf(head: Data, maxp: Data, loca: Data, glyf: Data, scale: Double, riseUnits: Int, weightPercent: Double, globalYMid: Double, selectedGlyphs: Set<Int>?, glyphAdjustments: [Int: NativeGlyphAdjustment], replacementGlyphs: [Int: [[OutlinePoint]]], upm: Int) -> (glyf: Data, loca: Data, head: Data, maxPoints: Int, maxContours: Int, averageBolden: Double)? {
     guard head.count >= 52, maxp.count >= 6 else { return nil }
     let numGlyphs = Int(readUInt16(maxp, 4))
     let longLoca = readInt16(head, 50) == 1
@@ -616,9 +582,7 @@ private final class NativeTTFProcessor {
       newHead,
       maxSimplePoints,
       maxSimpleContours,
-      boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0,
-      globalMinY == Int.max ? 0 : globalMinY,
-      globalMaxY == Int.min ? 0 : globalMaxY
+      boldenCount > 0 ? boldenTotal / Double(boldenCount) : 0
     )
   }
 
@@ -1199,9 +1163,18 @@ private enum NativeOutlineFontProcessor {
     )
     let side = CGFloat(max(1, unitsPerEm))
     let centerX = advance.width * 0.5
+    let bounds = CTFontGetBoundingRectsForGlyphs(
+      font,
+      .default,
+      &mutableGlyph,
+      nil,
+      1
+    )
+    let fallbackCenterY = (CTFontGetAscent(font) - CTFontGetDescent(font)) * 0.5
+    let centerY = bounds.height > 0 ? bounds.midY : fallbackCenterY
     return CGRect(
       x: centerX - side * 0.5,
-      y: 0,
+      y: centerY - side * 0.5,
       width: side,
       height: side
     )
@@ -1797,7 +1770,8 @@ private enum RasterGlyphConverter {
     let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    if let background = raster.background {
+    if !preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension),
+       let background = raster.background {
       removeConnectedBackground(
         &samples,
         color: background,
@@ -1834,7 +1808,8 @@ private enum RasterGlyphConverter {
     let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    if let background = raster.background {
+    if !preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension),
+       let background = raster.background {
       removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
     let mask = cleanMask(
@@ -1866,9 +1841,19 @@ private enum RasterGlyphConverter {
     )
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    if let background = raster.background {
+    let preserveOpaqueArtwork = preservesOpaqueArtwork(
+      data,
+      samples: samples,
+      width: dimension,
+      height: dimension
+    )
+    if !preserveOpaqueArtwork, let background = raster.background {
       removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
+    // A fully opaque JPG is preserved verbatim in sbix. Do not generate an
+    // approximate COLR layer for its white rectangle: the bitmap fallback is
+    // the only representation that can retain all pale source pixels.
+    if preserveOpaqueArtwork { return [] }
     var histogram: [Int: (red: Double, green: Double, blue: Double, count: Int)] = [:]
     for index in samples.indices {
       guard let sample = samples[index] else { continue }
@@ -1984,6 +1969,25 @@ private enum RasterGlyphConverter {
   private static func sourceCanvasScale(_ data: Data) -> Double {
     guard let image = UIImage(data: data)?.cgImage else { return 1 }
     return image.width == 1536 && image.height == 1536 ? 3 : 1
+  }
+
+  private static func preservesOpaqueArtwork(
+    _ data: Data,
+    samples: [ColorSample?],
+    width: Int,
+    height: Int
+  ) -> Bool {
+    guard sourceCanvasScale(data) > 1,
+          let bounds = opaqueBounds(samples, width: width, height: height) else {
+      return false
+    }
+    let expectedInset = width / 6
+    let expectedLimit = width - expectedInset - 1
+    let tolerance = max(2, width / 128)
+    return bounds.minX <= expectedInset + tolerance &&
+      bounds.minY <= expectedInset + tolerance &&
+      bounds.maxX >= expectedLimit - tolerance &&
+      bounds.maxY >= expectedLimit - tolerance
   }
 
   private static func rasterDimension(base: Int, canvasScale: Double) -> Int {

@@ -247,7 +247,14 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     final pixels = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (pixels == null) return bytes;
 
-    final detected = _foregroundBounds(pixels, image.width, image.height);
+    // Do not use RGB similarity to crop a fully opaque photo. Pale stickers
+    // commonly contain pixels very close to their white background, and an
+    // RGB crop would remove part of the artwork. Transparent PNGs still use
+    // their alpha bounds to remove only genuinely empty canvas.
+    final hasTransparency = _hasTransparentPixels(pixels);
+    final detected = hasTransparency
+        ? _foregroundBounds(pixels, image.width, image.height)
+        : null;
     final source =
         detected ??
         Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
@@ -280,6 +287,13 @@ class _NativeToolPanelState extends State<NativeToolPanel>
     image.dispose();
     rendered.dispose();
     return output?.buffer.asUint8List() ?? bytes;
+  }
+
+  bool _hasTransparentPixels(ByteData pixels) {
+    for (var offset = 3; offset < pixels.lengthInBytes; offset += 4) {
+      if (pixels.getUint8(offset) < 250) return true;
+    }
+    return false;
   }
 
   Rect? _foregroundBounds(ByteData pixels, int width, int height) {
