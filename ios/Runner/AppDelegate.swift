@@ -1636,21 +1636,22 @@ private enum NativeColorFontProcessor {
     let strikeScale = Double(ppem) / 512.0
     let visualScale = max(0.001, transform.scale)
     let totalScale = baseScale * strikeScale * visualScale
-    let outputWidth = max(1, Int(round(Double(cropped.width) * totalScale)))
-    let outputHeight = max(1, Int(round(Double(cropped.height) * totalScale)))
+    let outputWidth = max(1, Int(round(Double(bounds.width) * totalScale)))
+    let outputHeight = max(1, Int(round(Double(bounds.height) * totalScale)))
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
     format.opaque = false
     let output = UIGraphicsImageRenderer(
-      size: CGSize(width: outputWidth, height: outputHeight),
+      size: CGSize(width: CGFloat(outputWidth), height: CGFloat(outputHeight)),
       format: format
     ).image { _ in
+      let drawingScale = CGFloat(totalScale)
       sourceImage.draw(
         in: CGRect(
-          x: -Double(bounds.minX) * totalScale,
-          y: -Double(bounds.minY) * totalScale,
-          width: Double(image.width) * totalScale,
-          height: Double(image.height) * totalScale
+          x: -bounds.minX * drawingScale,
+          y: -bounds.minY * drawingScale,
+          width: CGFloat(image.width) * drawingScale,
+          height: CGFloat(image.height) * drawingScale
         )
       )
     }
@@ -1680,10 +1681,10 @@ private enum NativeColorFontProcessor {
     format.scale = 1
     format.opaque = false
     let normalized = UIGraphicsImageRenderer(
-      size: CGSize(width: width, height: height),
+      size: CGSize(width: CGFloat(width), height: CGFloat(height)),
       format: format
     ).image { _ in
-      image.draw(in: CGRect(x: 0, y: 0, width: width, height: height))
+      image.draw(in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
     }
     guard let renderedImage = normalized.cgImage else { return nil }
     var pixels = [UInt8](repeating: 0, count: width * height * 4)
@@ -1698,7 +1699,7 @@ private enum NativeColorFontProcessor {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue |
           CGBitmapInfo.byteOrder32Big.rawValue
       ) else { return false }
-      context.draw(renderedImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+      context.draw(renderedImage, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
       return true
     }
     guard rendered else { return nil }
