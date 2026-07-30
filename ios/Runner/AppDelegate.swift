@@ -1620,9 +1620,9 @@ private enum NativeColorFontProcessor {
     centerX: Double,
     centerY: Double
   ) -> SBIXBitmap? {
-    guard let image = UIImage(data: data)?.cgImage,
-          let bounds = bitmapAlphaBounds(image),
-          let cropped = image.cropping(to: bounds) else { return nil }
+    guard let image = UIImage(data: data)?.cgImage else { return nil }
+    let sourceImage = UIImage(cgImage: image)
+    guard let bounds = bitmapAlphaBounds(sourceImage) else { return nil }
     let workspace = image.width == 1536 && image.height == 1536
     let baseScale = workspace
       ? 1.0
@@ -1645,8 +1645,13 @@ private enum NativeColorFontProcessor {
       size: CGSize(width: outputWidth, height: outputHeight),
       format: format
     ).image { _ in
-      UIImage(cgImage: cropped).draw(
-        in: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+      sourceImage.draw(
+        in: CGRect(
+          x: -Double(bounds.minX) * totalScale,
+          y: -Double(bounds.minY) * totalScale,
+          width: Double(image.width) * totalScale,
+          height: Double(image.height) * totalScale
+        )
       )
     }
     guard let png = output.pngData() else { return nil }
@@ -1666,10 +1671,21 @@ private enum NativeColorFontProcessor {
     )
   }
 
-  private static func bitmapAlphaBounds(_ image: CGImage) -> CGRect? {
-    let width = image.width
-    let height = image.height
+  private static func bitmapAlphaBounds(_ image: UIImage) -> CGRect? {
+    guard let cgImage = image.cgImage else { return nil }
+    let width = cgImage.width
+    let height = cgImage.height
     guard width > 0, height > 0 else { return nil }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let normalized = UIGraphicsImageRenderer(
+      size: CGSize(width: width, height: height),
+      format: format
+    ).image { _ in
+      image.draw(in: CGRect(x: 0, y: 0, width: width, height: height))
+    }
+    guard let renderedImage = normalized.cgImage else { return nil }
     var pixels = [UInt8](repeating: 0, count: width * height * 4)
     let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
       guard let context = CGContext(
@@ -1682,9 +1698,7 @@ private enum NativeColorFontProcessor {
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue |
           CGBitmapInfo.byteOrder32Big.rawValue
       ) else { return false }
-      context.translateBy(x: 0, y: CGFloat(height))
-      context.scaleBy(x: 1, y: -1)
-      context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+      context.draw(renderedImage, in: CGRect(x: 0, y: 0, width: width, height: height))
       return true
     }
     guard rendered else { return nil }
@@ -1795,7 +1809,14 @@ private enum RasterGlyphConverter {
       width: dimension,
       height: dimension
     )
-    let sourceContours = traceContours(mask, width: dimension, height: dimension)
+    var sourceContours = traceContours(mask, width: dimension, height: dimension)
+    if sourceContours.isEmpty, preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension) {
+      sourceContours = traceContours(
+        cleanMask(alphaFallbackMask(samples), width: dimension, height: dimension),
+        width: dimension,
+        height: dimension
+      )
+    }
     return mapContours(
       sourceContours,
       sourceWidth: dimension,
@@ -1828,8 +1849,16 @@ private enum RasterGlyphConverter {
       width: dimension,
       height: dimension
     )
+    var sourceContours = traceContours(mask, width: dimension, height: dimension)
+    if sourceContours.isEmpty, preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension) {
+      sourceContours = traceContours(
+        cleanMask(alphaFallbackMask(samples), width: dimension, height: dimension),
+        width: dimension,
+        height: dimension
+      )
+    }
     return mapContours(
-      traceContours(mask, width: dimension, height: dimension),
+      sourceContours,
       sourceWidth: dimension,
       sourceHeight: dimension,
       targetBox: glyphBox,
@@ -1972,6 +2001,12 @@ private enum RasterGlyphConverter {
       guard let sample else { return false }
       return sample.red * 0.2126 + sample.green * 0.7152 + sample.blue * 0.0722 <= threshold
     }
+  }
+
+  private static func alphaFallbackMask(
+    _ samples: [ColorSample?]
+  ) -> [Bool] {
+    samples.map { $0 != nil }
   }
 
   private static func sourceCanvasScale(_ data: Data) -> Double {

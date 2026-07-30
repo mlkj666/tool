@@ -101,6 +101,9 @@ void main() {
     expect(nativeEngine, contains('patched.maxContours'));
     expect(nativeEngine, contains('preservesOpaqueArtwork'));
     expect(nativeEngine, contains('if preserveBitmap { return [] }'));
+    expect(nativeEngine, contains('bitmapAlphaBounds(_ image: UIImage)'));
+    expect(nativeEngine, contains('sourceImage.draw'));
+    expect(nativeEngine, contains('alphaFallbackMask'));
     expect(nativeEngine, contains('presentationControllerDidDismiss'));
     expect(nativeEngine, isNot(contains('adjustedMinY = patched.minY')));
     expect(nativeEngine, isNot(contains('writeInt16(&patchedHhea')));
@@ -165,7 +168,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.33+34'));
+    expect(pubspec, contains('version: 1.0.34+35'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
