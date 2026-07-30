@@ -103,20 +103,11 @@ void main() {
     expect(nativeEngine, contains('CTFontGetBoundingRectsForGlyphs'));
     expect(nativeEngine, contains('let centerY = bounds.height > 0'));
     expect(nativeEngine, contains('tables["BSFT"]'));
-    expect(nativeEngine, contains('patched.maxPoints'));
-    expect(nativeEngine, contains('patched.maxContours'));
-    expect(nativeEngine, contains('preservesOpaqueArtwork'));
-    expect(nativeEngine, contains('if preserveBitmap { return [] }'));
-    expect(nativeEngine, contains('bitmapAlphaBounds(_ image: UIImage)'));
-    expect(nativeEngine, contains('sourceImage.draw'));
-    expect(
-      nativeEngine,
-      contains('let bottomMargin = Double(image.height) - Double(bounds.maxY)'),
-    );
-    expect(
-      nativeEngine,
-      contains('preserveBitmap ? alphaFallbackMask(samples)'),
-    );
+    expect(nativeEngine, contains('removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)'));
+    expect(nativeEngine, contains('monochromeFallbackMask(samples)'));
+    expect(nativeEngine, isNot(contains('preservesOpaqueArtwork')));
+    expect(nativeEngine, isNot(contains('if preserveBitmap { return [] }')));
+    expect(nativeEngine, isNot(contains('preserveBitmap ? alphaFallbackMask(samples)')));
     expect(nativeEngine, contains('alphaFallbackMask'));
     expect(nativeEngine, contains('presentationControllerDidDismiss'));
     expect(nativeEngine, contains('active?.dismiss(animated: true)'));
@@ -125,8 +116,10 @@ void main() {
     expect(nativeEngine, contains('patchHheaHorizontalMetrics'));
     expect(nativeEngine, contains('writeInt16(&out, 16, xMaxExtent)'));
     expect(nativeEngine, contains('fitContoursInsideTargetBox'));
-    expect(nativeEngine, contains('let frameMaxX = centerX + 256.0'));
-    expect(nativeEngine, contains('originX512 + width512 > frameMaxX'));
+    expect(
+      nativeEngine,
+      contains('return normalizeContourWinding(fitContoursInsideTargetBox(mapped, targetBox: targetBox))'),
+    );
     expect(nativeEngine, contains('replacementVerticalBounds'));
     expect(nativeEngine, contains('metrics.count == glyphCount'));
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
@@ -154,29 +147,24 @@ void main() {
       nativeEngine,
       contains('for tag in ["COLR", "CPAL", "sbix", "CBDT", "CBLC", "SVG "]'),
     );
-    expect(nativeEngine, contains('makeSBIX'));
-    expect(
-      nativeEngine,
-      contains('let strikeSizes = [512, 256, 128, 96, 64, 48, 32]'),
-    );
-    expect(nativeEngine, contains('let sbixFlags: UInt16 = 1'));
+    expect(nativeEngine, isNot(contains('makeSBIX')));
+    expect(nativeEngine, contains('tables["COLR"] = FontTable'));
+    expect(nativeEngine, contains('tables["CPAL"] = FontTable'));
+    expect(nativeEngine, contains('let imageLayers = try appendImageLayers'));
+    expect(nativeEngine, isNot(contains('let strikeSizes = [512, 256, 128, 96, 64, 48, 32]')));
+    expect(nativeEngine, isNot(contains('let sbixFlags: UInt16 = 1')));
+    expect(nativeEngine, isNot(contains('bitmapAlphaBounds')));
+    expect(nativeEngine, isNot(contains('bitmapData.append(bitmap.data)')));
+    expect(nativeEngine, isNot(contains('offset += 8 + bitmap.data.count')));
     expect(nativeEngine, contains('transformsByGlyph: transformsByGlyph'));
-    expect(
-      nativeEngine,
-      contains('transform: transformsByGlyph[glyph] ?? .identity'),
-    );
-    expect(nativeEngine, contains('centerX: Double(glyphBox.midX)'));
-    expect(nativeEngine, contains('centerY: Double(glyphBox.midY)'));
-    expect(nativeEngine, contains('bitmapAlphaBounds'));
+    expect(nativeEngine, contains('transform: transformsByGlyph[baseGlyph] ?? .identity'));
+    expect(nativeEngine, contains('targetBox: targetBox'));
+    expect(nativeEngine, contains('guard !rasterLayers.isEmpty else { continue }'));
     expect(nativeEngine, contains('monochromeFallbackMask'));
-    expect(
-      nativeEngine,
-      contains('let visualScale = max(0.001, transform.scale)'),
-    );
-    expect(nativeEngine, contains('let scale = max(0.001, userScale)'));
-    expect(nativeEngine, contains('userScale: userScale * canvasScale'));
-    expect(nativeEngine, contains('bitmapData.append(bitmap.data)'));
-    expect(nativeEngine, contains('offset += 8 + bitmap.data.count'));
+    expect(nativeEngine, contains('let scale = max(0.001, userScale) * min(heightScale, widthScale)'));
+    expect(nativeEngine, contains('userScale: canvasScale * transform.scale'));
+    expect(nativeEngine, contains('offsetX: transform.x / 100 * Double(unitsPerEm)'));
+    expect(nativeEngine, contains('offsetY: transform.y / 100 * Double(unitsPerEm)'));
     expect(
       nativeEngine,
       contains('let hasReplacements = !params.replacements.isEmpty'),
@@ -189,7 +177,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.39+40'));
+    expect(pubspec, contains('version: 1.0.40+41'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
