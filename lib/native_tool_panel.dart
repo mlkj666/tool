@@ -31,7 +31,7 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   static const double _replacementWorkspaceSide = 2048;
   static const double _replacementWorkspaceScale =
       _replacementWorkspaceSide / _replacementReferenceSide;
-  static const double _replacementOffsetScale = 3;
+  static const double _replacementOffsetScale = _replacementReferenceSide / 100;
   final _textController = TextEditingController(text: '爆闪 STUDIO 字体 修符工具');
   final _drawPoints = <Offset>[];
   final List<List<Offset>> _drawUndo = [];

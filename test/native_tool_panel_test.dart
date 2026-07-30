@@ -76,6 +76,8 @@ void main() {
       panel,
       contains('static const double _replacementWorkspaceSide = 2048'),
     );
+    expect(panel, contains('static const double _replacementOffsetScale ='));
+    expect(panel, contains('_replacementReferenceSide / 100'));
     expect(panel, contains('.toImage('));
     expect(panel, contains('canvasSide.toInt()'));
     expect(panel, contains('ValueListenableBuilder<TextEditingValue>'));
@@ -117,8 +119,12 @@ void main() {
     );
     expect(nativeEngine, contains('alphaFallbackMask'));
     expect(nativeEngine, contains('presentationControllerDidDismiss'));
+    expect(nativeEngine, contains('active?.dismiss(animated: true)'));
     expect(nativeEngine, contains('patchHheaVerticalBounds'));
     expect(nativeEngine, contains('patchOS2VerticalBounds'));
+    expect(nativeEngine, contains('patchHheaHorizontalMetrics'));
+    expect(nativeEngine, contains('let rightPadding = max(24, upm / 16)'));
+    expect(nativeEngine, contains('writeInt16(&out, 16, xMaxExtent)'));
     expect(nativeEngine, contains('replacementVerticalBounds'));
     expect(nativeEngine, contains('metrics.count == glyphCount'));
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
@@ -181,7 +187,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.37+38'));
+    expect(pubspec, contains('version: 1.0.38+39'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

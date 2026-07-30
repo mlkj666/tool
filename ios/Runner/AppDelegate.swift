@@ -66,11 +66,13 @@ import UniformTypeIdentifiers
 
   private func pickImages(source: String, result: @escaping FlutterResult) {
     if pendingImageResult != nil {
-      if activeImagePicker?.presentingViewController != nil {
+      let active = activeImagePicker
+      cancelImageRequest()
+      if active?.presentingViewController != nil {
+        active?.dismiss(animated: true)
         result([])
         return
       }
-      cancelImageRequest()
     }
     guard let presenter = topViewController() else {
       result(FlutterError(code: "unavailable", message: "暂时无法打开图片选择器，请稍后重试", details: nil))
@@ -169,13 +171,10 @@ import UniformTypeIdentifiers
   }
 
   func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-    guard let active = activeImagePicker,
-          active.presentationController === presentationController,
-          let token = imageRequestToken else {
-      return
-    }
     activeImagePicker = nil
-    finishImageRequest(token: token, value: [])
+    if let token = imageRequestToken {
+      finishImageRequest(token: token, value: [])
+    }
   }
 
   private func finishImageRequest(token: UUID, value: Any?) {
@@ -451,7 +450,11 @@ private final class NativeTTFProcessor {
        let hmtx = tables["hmtx"], let hhea = tables["hhea"] {
       let patchedHmtx = patchHmtx(hmtx: hmtx.data, hhea: hhea.data, scale: scale, spacingUnits: spacingUnits, boldenUnits: averageBolden, selectedGlyphs: selectedGlyphs, glyphAdjustments: glyphAdjustments, replacementGlyphs: replacementGlyphs, upm: upm)
       tables["hmtx"]?.data = patchedHmtx
-      tables["hhea"]?.data = patchAdvanceWidthMax(hhea: hhea.data, hmtx: patchedHmtx)
+      tables["hhea"]?.data = patchHheaHorizontalMetrics(
+        hhea: hhea.data,
+        hmtx: patchedHmtx,
+        replacementGlyphs: replacementGlyphs
+      )
     }
 
     if abs(params.line) > 0.01 {
@@ -841,11 +844,12 @@ private final class NativeTTFProcessor {
         let minX = points.map(\.x).min() ?? 0
         let maxX = points.map(\.x).max() ?? minX
         let inkWidth = max(1, maxX - minX)
+        let rightPadding = max(24, upm / 16)
         let spacingScale = max(0.01, appliedScale)
         let unscaledInk = Double(inkWidth) / max(0.05, appliedScale)
         let scaledAdvance = spacingScale * max(Double(oldWidth), unscaledInk)
         let visibleAdvance = Double(maxX - min(0, minX))
-        let advance = Int(round(max(scaledAdvance, visibleAdvance))) +
+        let advance = Int(round(max(scaledAdvance, visibleAdvance + Double(rightPadding)))) +
           (selected ? spacingUnits : 0) + characterSpacingUnits
         writeUInt16(&out, p, UInt16(max(1, min(65535, advance))))
         writeInt16(&out, p + 2, minX)
@@ -862,13 +866,36 @@ private final class NativeTTFProcessor {
     return out
   }
 
-  private static func patchAdvanceWidthMax(hhea: Data, hmtx: Data) -> Data {
+  private static func patchHheaHorizontalMetrics(
+    hhea: Data,
+    hmtx: Data,
+    replacementGlyphs: [Int: [[OutlinePoint]]]
+  ) -> Data {
     guard hhea.count >= 36 else { return hhea }
     var out = hhea
     let count = min(Int(readUInt16(hhea, 34)), hmtx.count / 4)
     var maximum = 0
-    for index in 0..<count { maximum = max(maximum, Int(readUInt16(hmtx, index * 4))) }
+    var minLeftSideBearing = Int(readInt16(hhea, 12))
+    var minRightSideBearing = Int(readInt16(hhea, 14))
+    var xMaxExtent = Int(readInt16(hhea, 16))
+    for index in 0..<count {
+      let offset = index * 4
+      maximum = max(maximum, Int(readUInt16(hmtx, offset)))
+      guard let replacement = replacementGlyphs[index] else { continue }
+      let points = replacement.flatMap { $0 }
+      guard let minX = points.map(\.x).min(),
+            let maxX = points.map(\.x).max() else { continue }
+      let advance = Int(readUInt16(hmtx, offset))
+      let leftSideBearing = Int(readInt16(hmtx, offset + 2))
+      let rightSideBearing = advance - leftSideBearing - (maxX - minX)
+      minLeftSideBearing = min(minLeftSideBearing, leftSideBearing)
+      minRightSideBearing = min(minRightSideBearing, rightSideBearing)
+      xMaxExtent = max(xMaxExtent, leftSideBearing + (maxX - minX))
+    }
     writeUInt16(&out, 10, UInt16(min(65535, maximum)))
+    writeInt16(&out, 12, minLeftSideBearing)
+    writeInt16(&out, 14, minRightSideBearing)
+    writeInt16(&out, 16, xMaxExtent)
     return out
   }
 
