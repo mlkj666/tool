@@ -471,7 +471,25 @@ private final class NativeTTFProcessor {
       if abs(params.line) > 0.01 {
         patched = patchOS2(patched, lineHeightPercent: params.line)
       }
+      if let bounds = replacementVerticalBounds(replacementGlyphs) {
+        patched = patchOS2VerticalBounds(
+          patched,
+          minY: bounds.minY,
+          maxY: bounds.maxY,
+          padding: max(8, upm / 64)
+        )
+      }
       tables["OS/2"]?.data = patched
+    }
+
+    if let bounds = replacementVerticalBounds(replacementGlyphs),
+       let hhea = tables["hhea"] {
+      tables["hhea"]?.data = patchHheaVerticalBounds(
+        hhea.data,
+        minY: bounds.minY,
+        maxY: bounds.maxY,
+        padding: max(8, upm / 64)
+      )
     }
 
     return serializeTables(tables, sfntVersion: readUInt32(data, 0))
@@ -851,6 +869,59 @@ private final class NativeTTFProcessor {
     var maximum = 0
     for index in 0..<count { maximum = max(maximum, Int(readUInt16(hmtx, index * 4))) }
     writeUInt16(&out, 10, UInt16(min(65535, maximum)))
+    return out
+  }
+
+  private static func replacementVerticalBounds(
+    _ replacementGlyphs: [Int: [[OutlinePoint]]]
+  ) -> (minY: Int, maxY: Int)? {
+    var minY = Int.max
+    var maxY = Int.min
+    for contours in replacementGlyphs.values {
+      for contour in contours {
+        for point in contour {
+          minY = min(minY, point.y)
+          maxY = max(maxY, point.y)
+        }
+      }
+    }
+    guard minY != Int.max, maxY != Int.min else { return nil }
+    return (minY, maxY)
+  }
+
+  private static func patchHheaVerticalBounds(
+    _ hhea: Data,
+    minY: Int,
+    maxY: Int,
+    padding: Int
+  ) -> Data {
+    guard hhea.count >= 10 else { return hhea }
+    var out = hhea
+    let asc = max(Int(readInt16(out, 4)), maxY + padding)
+    let desc = min(Int(readInt16(out, 6)), minY - padding)
+    writeInt16(&out, 4, asc)
+    writeInt16(&out, 6, desc)
+    return out
+  }
+
+  private static func patchOS2VerticalBounds(
+    _ os2: Data,
+    minY: Int,
+    maxY: Int,
+    padding: Int
+  ) -> Data {
+    guard os2.count >= 72 else { return os2 }
+    var out = os2
+    let asc = max(Int(readInt16(out, 68)), maxY + padding)
+    let desc = min(Int(readInt16(out, 70)), minY - padding)
+    writeInt16(&out, 68, asc)
+    writeInt16(&out, 70, desc)
+    if out.count >= 78 {
+      let winAsc = max(Int(readUInt16(out, 74)), max(0, maxY + padding))
+      let winDesc = max(Int(readUInt16(out, 76)), max(0, -minY + padding))
+      writeUInt16(&out, 74, UInt16(min(65535, winAsc)))
+      writeUInt16(&out, 76, UInt16(min(65535, winDesc)))
+    }
     return out
   }
 
@@ -1623,15 +1694,18 @@ private enum NativeColorFontProcessor {
     guard let image = UIImage(data: data)?.cgImage else { return nil }
     let sourceImage = UIImage(cgImage: image)
     guard let bounds = bitmapAlphaBounds(sourceImage) else { return nil }
-    let workspace = image.width == 1536 && image.height == 1536
+    let workspaceScale = image.width == image.height && image.width >= 1536
+      ? Double(image.width) / 512.0
+      : 1.0
+    let workspace = workspaceScale > 1.0
     let baseScale = workspace
       ? 1.0
       : min(512.0 / Double(image.width), 512.0 / Double(image.height))
     let canvasLeft = workspace
-      ? -512.0
+      ? -(Double(image.width) - 512.0) * 0.5
       : (512.0 - Double(image.width) * baseScale) * 0.5
     let canvasBottom = workspace
-      ? -512.0
+      ? -(Double(image.height) - 512.0) * 0.5
       : (512.0 - Double(image.height) * baseScale) * 0.5
     let strikeScale = Double(ppem) / 512.0
     let visualScale = max(0.001, transform.scale)
@@ -1657,8 +1731,8 @@ private enum NativeColorFontProcessor {
     }
     guard let png = output.pngData() else { return nil }
     let baseOriginX = canvasLeft + Double(bounds.minX) * baseScale
-    let removedBottom = Double(image.height) - Double(bounds.maxY)
-    let baseOriginY = canvasBottom + removedBottom * baseScale
+    let bottomMargin = Double(image.height) - Double(bounds.maxY)
+    let baseOriginY = canvasBottom + bottomMargin * baseScale
     let originX = (
       centerX + (baseOriginX - centerX) * visualScale + transform.x / 100 * 512
     ) * strikeScale
@@ -1714,13 +1788,11 @@ private enum NativeColorFontProcessor {
     let padding = 1
     minX = max(0, minX - padding); minY = max(0, minY - padding)
     maxX = min(width - 1, maxX + padding); maxY = min(height - 1, maxY + padding)
-    let top = height - 1 - maxY
-    let bottom = height - 1 - minY
     return CGRect(
       x: CGFloat(minX),
-      y: CGFloat(top),
+      y: CGFloat(minY),
       width: CGFloat(maxX - minX + 1),
-      height: CGFloat(bottom - top + 1)
+      height: CGFloat(maxY - minY + 1)
     )
   }
 
@@ -2021,7 +2093,8 @@ private enum RasterGlyphConverter {
 
   private static func sourceCanvasScale(_ data: Data) -> Double {
     guard let image = UIImage(data: data)?.cgImage else { return 1 }
-    return image.width == 1536 && image.height == 1536 ? 3 : 1
+    guard image.width == image.height, image.width >= 1536 else { return 1 }
+    return Double(image.width) / 512.0
   }
 
   private static func preservesOpaqueArtwork(
@@ -2035,7 +2108,7 @@ private enum RasterGlyphConverter {
   }
 
   private static func rasterDimension(base: Int, canvasScale: Double) -> Int {
-    max(base, min(768, Int(round(Double(base) * canvasScale))))
+    max(base, min(1024, Int(round(Double(base) * canvasScale))))
   }
 
   private static func cleanMask(_ input: [Bool], width: Int, height: Int) -> [Bool] {

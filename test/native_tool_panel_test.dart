@@ -72,8 +72,12 @@ void main() {
     expect(panel, contains('_prepareImportedImage'));
     expect(panel, contains('_foregroundBounds'));
     expect(panel, contains('_hasTransparentPixels'));
-    expect(panel, contains('const canvasSide = 1536.0'));
-    expect(panel, contains('toImage(1536, 1536)'));
+    expect(
+      panel,
+      contains('static const double _replacementWorkspaceSide = 2048'),
+    );
+    expect(panel, contains('.toImage('));
+    expect(panel, contains('canvasSide.toInt()'));
     expect(panel, contains('ValueListenableBuilder<TextEditingValue>'));
     expect(panel, contains('alignment: WrapAlignment.start'));
     expect(panel, contains('Icons.remove_circle_outline'));
@@ -103,15 +107,19 @@ void main() {
     expect(nativeEngine, contains('if preserveBitmap { return [] }'));
     expect(nativeEngine, contains('bitmapAlphaBounds(_ image: UIImage)'));
     expect(nativeEngine, contains('sourceImage.draw'));
-    expect(nativeEngine, contains('let top = height - 1 - maxY'));
+    expect(
+      nativeEngine,
+      contains('let bottomMargin = Double(image.height) - Double(bounds.maxY)'),
+    );
     expect(
       nativeEngine,
       contains('preserveBitmap ? alphaFallbackMask(samples)'),
     );
     expect(nativeEngine, contains('alphaFallbackMask'));
     expect(nativeEngine, contains('presentationControllerDidDismiss'));
-    expect(nativeEngine, isNot(contains('adjustedMinY = patched.minY')));
-    expect(nativeEngine, isNot(contains('writeInt16(&patchedHhea')));
+    expect(nativeEngine, contains('patchHheaVerticalBounds'));
+    expect(nativeEngine, contains('patchOS2VerticalBounds'));
+    expect(nativeEngine, contains('replacementVerticalBounds'));
     expect(nativeEngine, contains('metrics.count == glyphCount'));
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
     expect(nativeEngine, contains('metrics.reserveCapacity'));
@@ -173,7 +181,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.36+37'));
+    expect(pubspec, contains('version: 1.0.37+38'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

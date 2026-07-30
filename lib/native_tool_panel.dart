@@ -27,6 +27,11 @@ class NativeToolPanel extends StatefulWidget {
 class _NativeToolPanelState extends State<NativeToolPanel>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   static const _channel = MethodChannel('bs_font/native');
+  static const double _replacementReferenceSide = 512;
+  static const double _replacementWorkspaceSide = 2048;
+  static const double _replacementWorkspaceScale =
+      _replacementWorkspaceSide / _replacementReferenceSide;
+  static const double _replacementOffsetScale = 3;
   final _textController = TextEditingController(text: '爆闪 STUDIO 字体 修符工具');
   final _drawPoints = <Offset>[];
   final List<List<Offset>> _drawUndo = [];
@@ -1117,8 +1122,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
   }) async {
     final codec = await ui.instantiateImageCodec(source);
     final frame = await codec.getNextFrame();
-    const referenceSide = 512.0;
-    const canvasSide = 1536.0;
+    const referenceSide = _replacementReferenceSide;
+    const canvasSide = _replacementWorkspaceSide;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     final paint = Paint()
@@ -1127,8 +1132,8 @@ class _NativeToolPanelState extends State<NativeToolPanel>
           : FilterQuality.none;
     final drawSize = referenceSide * scale.clamp(.05, 1.5);
     final rect = Rect.fromLTWH(
-      (canvasSide - drawSize) / 2 + x * 3,
-      (canvasSide - drawSize) / 2 - y * 3,
+      (canvasSide - drawSize) / 2 + x * _replacementOffsetScale,
+      (canvasSide - drawSize) / 2 - y * _replacementOffsetScale,
       drawSize,
       drawSize,
     );
@@ -1143,7 +1148,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       rect,
       paint,
     );
-    final rendered = await recorder.endRecording().toImage(1536, 1536);
+    final rendered = await recorder.endRecording().toImage(
+      canvasSide.toInt(),
+      canvasSide.toInt(),
+    );
     final bytes = await rendered.toByteData(format: ui.ImageByteFormat.png);
     frame.image.dispose();
     rendered.dispose();
@@ -1510,7 +1518,16 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       clipBehavior: Clip.none,
       children: [
         Transform.translate(
-          offset: Offset(_imageX * size * 3 / 512, -_imageY * size * 3 / 512),
+          offset: Offset(
+            _imageX *
+                size *
+                _replacementOffsetScale /
+                _replacementReferenceSide,
+            -_imageY *
+                size *
+                _replacementOffsetScale /
+                _replacementReferenceSide,
+          ),
           child: Transform.scale(
             scale: _imageScale,
             alignment: Alignment.center,
@@ -1537,10 +1554,10 @@ class _NativeToolPanelState extends State<NativeToolPanel>
       clipBehavior: Clip.none,
       children: [
         Positioned(
-          left: -size,
-          top: -size,
-          width: size * 3,
-          height: size * 3,
+          left: -size * (_replacementWorkspaceScale - 1) * .5,
+          top: -size * (_replacementWorkspaceScale - 1) * .5,
+          width: size * _replacementWorkspaceScale,
+          height: size * _replacementWorkspaceScale,
           child: Image.memory(
             bytes,
             fit: BoxFit.fill,
