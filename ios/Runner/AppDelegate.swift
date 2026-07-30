@@ -1714,7 +1714,14 @@ private enum NativeColorFontProcessor {
     let padding = 1
     minX = max(0, minX - padding); minY = max(0, minY - padding)
     maxX = min(width - 1, maxX + padding); maxY = min(height - 1, maxY + padding)
-    return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+    let top = height - 1 - maxY
+    let bottom = height - 1 - minY
+    return CGRect(
+      x: CGFloat(minX),
+      y: CGFloat(top),
+      width: CGFloat(maxX - minX + 1),
+      height: CGFloat(bottom - top + 1)
+    )
   }
 
   private static func parseColor(_ value: String) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -1796,7 +1803,8 @@ private enum RasterGlyphConverter {
     let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    if !preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension),
+    let preserveBitmap = preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension)
+    if !preserveBitmap,
        let background = raster.background {
       removeConnectedBackground(
         &samples,
@@ -1806,12 +1814,12 @@ private enum RasterGlyphConverter {
       )
     }
     let mask = cleanMask(
-      monochromeFallbackMask(samples),
+      preserveBitmap ? alphaFallbackMask(samples) : monochromeFallbackMask(samples),
       width: dimension,
       height: dimension
     )
     var sourceContours = traceContours(mask, width: dimension, height: dimension)
-    if sourceContours.isEmpty, preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension) {
+    if sourceContours.isEmpty, preserveBitmap {
       sourceContours = traceContours(
         cleanMask(alphaFallbackMask(samples), width: dimension, height: dimension),
         width: dimension,
@@ -1841,17 +1849,18 @@ private enum RasterGlyphConverter {
     let dimension = rasterDimension(base: 256, canvasScale: canvasScale)
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    if !preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension),
+    let preserveBitmap = preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension)
+    if !preserveBitmap,
        let background = raster.background {
       removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
     let mask = cleanMask(
-      monochromeFallbackMask(samples),
+      preserveBitmap ? alphaFallbackMask(samples) : monochromeFallbackMask(samples),
       width: dimension,
       height: dimension
     )
     var sourceContours = traceContours(mask, width: dimension, height: dimension)
-    if sourceContours.isEmpty, preservesOpaqueArtwork(data, samples: samples, width: dimension, height: dimension) {
+    if sourceContours.isEmpty, preserveBitmap {
       sourceContours = traceContours(
         cleanMask(alphaFallbackMask(samples), width: dimension, height: dimension),
         width: dimension,
