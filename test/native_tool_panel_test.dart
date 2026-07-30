@@ -123,8 +123,10 @@ void main() {
     expect(nativeEngine, contains('patchHheaVerticalBounds'));
     expect(nativeEngine, contains('patchOS2VerticalBounds'));
     expect(nativeEngine, contains('patchHheaHorizontalMetrics'));
-    expect(nativeEngine, contains('let rightPadding = max(24, upm / 16)'));
     expect(nativeEngine, contains('writeInt16(&out, 16, xMaxExtent)'));
+    expect(nativeEngine, contains('fitContoursInsideTargetBox'));
+    expect(nativeEngine, contains('let frameMaxX = centerX + 256.0'));
+    expect(nativeEngine, contains('originX512 + width512 > frameMaxX'));
     expect(nativeEngine, contains('replacementVerticalBounds'));
     expect(nativeEngine, contains('metrics.count == glyphCount'));
     expect(nativeEngine, contains('guard hasPalette || hasReplacements else'));
@@ -187,7 +189,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.38+39'));
+    expect(pubspec, contains('version: 1.0.39+40'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

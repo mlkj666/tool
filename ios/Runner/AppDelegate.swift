@@ -844,12 +844,11 @@ private final class NativeTTFProcessor {
         let minX = points.map(\.x).min() ?? 0
         let maxX = points.map(\.x).max() ?? minX
         let inkWidth = max(1, maxX - minX)
-        let rightPadding = max(24, upm / 16)
         let spacingScale = max(0.01, appliedScale)
         let unscaledInk = Double(inkWidth) / max(0.05, appliedScale)
         let scaledAdvance = spacingScale * max(Double(oldWidth), unscaledInk)
         let visibleAdvance = Double(maxX - min(0, minX))
-        let advance = Int(round(max(scaledAdvance, visibleAdvance + Double(rightPadding)))) +
+        let advance = Int(round(max(scaledAdvance, visibleAdvance))) +
           (selected ? spacingUnits : 0) + characterSpacingUnits
         writeUInt16(&out, p, UInt16(max(1, min(65535, advance))))
         writeInt16(&out, p + 2, minX)
@@ -1736,7 +1735,13 @@ private enum NativeColorFontProcessor {
       : (512.0 - Double(image.height) * baseScale) * 0.5
     let strikeScale = Double(ppem) / 512.0
     let visualScale = max(0.001, transform.scale)
-    let totalScale = baseScale * strikeScale * visualScale
+    let baseOriginX = canvasLeft + Double(bounds.minX) * baseScale
+    let bottomMargin = Double(image.height) - Double(bounds.maxY)
+    let baseOriginY = canvasBottom + bottomMargin * baseScale
+    let rawWidth = Double(bounds.width) * baseScale * visualScale
+    let fitScale = rawWidth > 512.0 ? 512.0 / rawWidth : 1.0
+    let effectiveVisualScale = visualScale * fitScale
+    let totalScale = baseScale * strikeScale * effectiveVisualScale
     let outputWidth = max(1, Int(round(Double(bounds.width) * totalScale)))
     let outputHeight = max(1, Int(round(Double(bounds.height) * totalScale)))
     let format = UIGraphicsImageRendererFormat()
@@ -1757,14 +1762,15 @@ private enum NativeColorFontProcessor {
       )
     }
     guard let png = output.pngData() else { return nil }
-    let baseOriginX = canvasLeft + Double(bounds.minX) * baseScale
-    let bottomMargin = Double(image.height) - Double(bounds.maxY)
-    let baseOriginY = canvasBottom + bottomMargin * baseScale
-    let originX = (
-      centerX + (baseOriginX - centerX) * visualScale + transform.x / 100 * 512
-    ) * strikeScale
+    let frameMinX = centerX - 256.0
+    let frameMaxX = centerX + 256.0
+    let width512 = Double(outputWidth) / strikeScale
+    var originX512 = centerX + (baseOriginX - centerX) * effectiveVisualScale + transform.x / 100 * 512
+    if originX512 < frameMinX { originX512 = frameMinX }
+    if originX512 + width512 > frameMaxX { originX512 = frameMaxX - width512 }
+    let originX = originX512 * strikeScale
     let originY = (
-      centerY + (baseOriginY - centerY) * visualScale + transform.y / 100 * 512
+      centerY + (baseOriginY - centerY) * effectiveVisualScale + transform.y / 100 * 512
     ) * strikeScale
     return SBIXBitmap(
       data: png,
@@ -2281,7 +2287,49 @@ private enum RasterGlyphConverter {
         )
       }
     }
-    return normalizeContourWinding(mapped)
+    return normalizeContourWinding(fitContoursInsideTargetBox(mapped, targetBox: targetBox))
+  }
+
+  private static func fitContoursInsideTargetBox(
+    _ contours: [[OutlinePoint]],
+    targetBox: CGRect
+  ) -> [[OutlinePoint]] {
+    let points = contours.flatMap { $0 }
+    guard !points.isEmpty else { return contours }
+    let targetMinX = Double(targetBox.minX)
+    let targetMaxX = Double(targetBox.maxX)
+    let targetMinY = Double(targetBox.minY)
+    let targetMaxY = Double(targetBox.maxY)
+    let minX = Double(points.map(\.x).min() ?? 0)
+    let maxX = Double(points.map(\.x).max() ?? 0)
+    let minY = Double(points.map(\.y).min() ?? 0)
+    let maxY = Double(points.map(\.y).max() ?? 0)
+    let width = max(1.0, maxX - minX)
+    let height = max(1.0, maxY - minY)
+    let targetWidth = max(1.0, targetMaxX - targetMinX)
+    let targetHeight = max(1.0, targetMaxY - targetMinY)
+    let scale = min(1.0, min(targetWidth / width, targetHeight / height))
+    let centerX = (minX + maxX) * 0.5
+    let centerY = (minY + maxY) * 0.5
+    let scaledMinX = centerX + (minX - centerX) * scale
+    let scaledMaxX = centerX + (maxX - centerX) * scale
+    let scaledMinY = centerY + (minY - centerY) * scale
+    let scaledMaxY = centerY + (maxY - centerY) * scale
+    var dx = 0.0
+    var dy = 0.0
+    if scaledMinX < targetMinX { dx = targetMinX - scaledMinX }
+    if scaledMaxX + dx > targetMaxX { dx = targetMaxX - scaledMaxX }
+    if scaledMinY < targetMinY { dy = targetMinY - scaledMinY }
+    if scaledMaxY + dy > targetMaxY { dy = targetMaxY - scaledMaxY }
+    return contours.map { contour in
+      contour.map { point in
+        OutlinePoint(
+          x: clamp(Int(round(centerX + (Double(point.x) - centerX) * scale + dx))),
+          y: clamp(Int(round(centerY + (Double(point.y) - centerY) * scale + dy))),
+          onCurve: point.onCurve
+        )
+      }
+    }
   }
 
   private static func clamp(_ value: Int) -> Int {
