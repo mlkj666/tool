@@ -5,7 +5,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate, UIAdaptivePresentationControllerDelegate {
   private var pendingImageResult: FlutterResult?
   private var imageRequestToken: UUID?
   private weak var activeImagePicker: UIViewController?
@@ -98,6 +98,7 @@ import UniformTypeIdentifiers
     config.selectionLimit = 1
     let picker = PHPickerViewController(configuration: config)
     picker.delegate = self
+    picker.presentationController?.delegate = self
     activeImagePicker = picker
     presenter.present(picker, animated: true) { [weak self, weak picker] in
       guard picker?.presentingViewController == nil else { return }
@@ -165,6 +166,16 @@ import UniformTypeIdentifiers
     activeImagePicker = nil
     picker.dismiss(animated: true)
     if let token { finishImageRequest(token: token, value: []) }
+  }
+
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+    guard let active = activeImagePicker,
+          active.presentationController === presentationController,
+          let token = imageRequestToken else {
+      return
+    }
+    activeImagePicker = nil
+    finishImageRequest(token: token, value: [])
   }
 
   private func finishImageRequest(token: UUID, value: Any?) {
@@ -1841,19 +1852,16 @@ private enum RasterGlyphConverter {
     )
     let raster = try rasterSamples(from: data, dimension: dimension)
     var samples = raster.samples
-    let preserveOpaqueArtwork = preservesOpaqueArtwork(
+    let preserveBitmap = preservesOpaqueArtwork(
       data,
       samples: samples,
       width: dimension,
       height: dimension
     )
-    if !preserveOpaqueArtwork, let background = raster.background {
+    if !preserveBitmap, let background = raster.background {
       removeConnectedBackground(&samples, color: background, width: dimension, height: dimension)
     }
-    // A fully opaque JPG is preserved verbatim in sbix. Do not generate an
-    // approximate COLR layer for its white rectangle: the bitmap fallback is
-    // the only representation that can retain all pale source pixels.
-    if preserveOpaqueArtwork { return [] }
+    if preserveBitmap { return [] }
     var histogram: [Int: (red: Double, green: Double, blue: Double, count: Int)] = [:]
     for index in samples.indices {
       guard let sample = samples[index] else { continue }
@@ -1977,17 +1985,8 @@ private enum RasterGlyphConverter {
     width: Int,
     height: Int
   ) -> Bool {
-    guard sourceCanvasScale(data) > 1,
-          let bounds = opaqueBounds(samples, width: width, height: height) else {
-      return false
-    }
-    let expectedInset = width / 6
-    let expectedLimit = width - expectedInset - 1
-    let tolerance = max(2, width / 128)
-    return bounds.minX <= expectedInset + tolerance &&
-      bounds.minY <= expectedInset + tolerance &&
-      bounds.maxX >= expectedLimit - tolerance &&
-      bounds.maxY >= expectedLimit - tolerance
+    guard sourceCanvasScale(data) > 1 else { return false }
+    return opaqueBounds(samples, width: width, height: height) != nil
   }
 
   private static func rasterDimension(base: Int, canvasScale: Double) -> Int {

@@ -100,7 +100,8 @@ void main() {
     expect(nativeEngine, contains('patched.maxPoints'));
     expect(nativeEngine, contains('patched.maxContours'));
     expect(nativeEngine, contains('preservesOpaqueArtwork'));
-    expect(nativeEngine, contains('if preserveOpaqueArtwork { return [] }'));
+    expect(nativeEngine, contains('if preserveBitmap { return [] }'));
+    expect(nativeEngine, contains('presentationControllerDidDismiss'));
     expect(nativeEngine, isNot(contains('adjustedMinY = patched.minY')));
     expect(nativeEngine, isNot(contains('writeInt16(&patchedHhea')));
     expect(nativeEngine, contains('metrics.count == glyphCount'));
@@ -164,7 +165,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.32+33'));
+    expect(pubspec, contains('version: 1.0.33+34'));
   });
 
   testWidgets('current effect preview lays out without an exception', (
