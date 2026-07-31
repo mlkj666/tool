@@ -177,7 +177,7 @@ void main() {
 
   test('app version advances with native workspace release', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: 1.0.40+41'));
+    expect(pubspec, contains('version: 1.0.41+42'));
   });
 
   testWidgets('current effect preview lays out without an exception', (

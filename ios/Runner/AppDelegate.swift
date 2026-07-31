@@ -1789,7 +1789,6 @@ private enum RasterGlyphConverter {
     }
     let foregroundCount = samples.compactMap { $0 }.count
     guard foregroundCount > 0 else { return [] }
-    if isGrayscaleImage(samples, foregroundCount: foregroundCount) { return [] }
 
     let ranked = histogram.values.sorted { $0.count > $1.count }
     var centers: [ColorSample] = []
@@ -1878,9 +1877,6 @@ private enum RasterGlyphConverter {
   ) -> [Bool] {
     let colors = samples.compactMap { $0 }
     guard !colors.isEmpty else { return Array(repeating: false, count: samples.count) }
-    if isGrayscaleImage(samples, foregroundCount: colors.count) {
-      return samples.map { $0 != nil }
-    }
     let luminance = colors.map {
       $0.red * 0.2126 + $0.green * 0.7152 + $0.blue * 0.0722
     }.sorted()
